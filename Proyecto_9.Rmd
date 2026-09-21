@@ -1,36 +1,31 @@
 ---
-title: "Con título"
+title: "Análisis Comercial y Exploración de Importaciones"
 output: 
   flexdashboard::flex_dashboard:
     orientation: columns
     vertical_layout: fill
+    theme: flatly
 ---
 
 ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+# 0. Carga de librerías
 library(flexdashboard)
-```
+library(jsonlite)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(DT)
 
-Column {data-width=650}
------------------------------------------------------------------------
+# 1. Descarga de datos comerciales reales (Petición directa para evitar errores de red)
+url_comercio <- "https://comtradeapi.un.org/public/v1/preview/C/A/HS?reporterCode=484&period=2022&flowCode=M"
 
-### Chart A
+# 2. Descargar y decodificar directamente los datos JSON
+datos_json <- jsonlite::fromJSON(url_comercio)
 
-```{r}
-
-```
-
-Column {data-width=350}
------------------------------------------------------------------------
-
-### Chart B
-
-```{r}
+# 3. Convertir la tabla interna a un tibble
+df_comercio <- as_tibble(datos_json$data)
 
 ```
-
-### Chart C
-
-```{r}
-
-```
-
