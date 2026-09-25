@@ -42,45 +42,74 @@ library(e1071)      # Asimetría (skewness) y Curtosis (kurtosis)
 library(corrplot)   # Matriz de correlación
 library(ggrepel)    # Etiquetas dinámicas en gráficos
 library(gridExtra)  # Disposición de gráficos
+library(skimr)
+library(ggplot2)
+library(comtradr) #lee la API
+```
+
+
+```{r}
+
+Sys.setenv('COMTRADE_PRIMARY' = '0d520a493f894ae3bb649b53ff6ab916')
 
 # 2. Carga de la data
 # Descarga de datos comerciales reales (Petición directa para evitar errores de red)
-url_comercio <- "https://comtradeapi.un.org/public/v1/preview/C/A/HS?reporterCode=484&period=2022&flowCode=M"
+url_comercio <- ct_get_data(
+    reporter = "MEX",
+   partner = "all_countries",
+    commodity_code = "everything",
+  start_date = 2015,
+  end_date = 2025,
+  flow_direction = c("import", "export")
+)
+
+# 2. Carga de la data
+# Descarga de datos comerciales reales (Petición directa para evitar errores de red)
+#url_comercio <- "https://comtradeapi.un.org/public/v1/preview/C/A/HS"
 
 # Descargar y decodificar directamente los datos JSON
-datos_json <- jsonlite::fromJSON(url_comercio)
-
-# Convertir la tabla interna a un tibble
-df_comercio <- as_tibble(datos_json$data)
-
-#str(df_comercio)
+#datos_json <- jsonlite::fromJSON(url_comercio)
 
 ```
+
+```{r}
+# Convertir la tabla interna a un tibble
+df_comercio <- as_tibble(url_comercio)
+
+head(df_comercio)
+str(df_comercio)
+```
+
 Después de decargar nuestros datos, solo nos quedamos con las variables que aportan valor explicativo real para los objetivos del negocio y eliminamos el "ruido" de un dataset que originalmente tiene 47 columnas (donde muchas vienen vacías, constantes o redundantes).
 
 ```{r extracción de variables, echo=FALSE}
 # Filtrado de transacciones válidas y selección de variables clave
 df_clean <- df_comercio %>%
-  filter(!is.na(primaryValue), primaryValue > 0, partnerCode != 0) %>%
+  filter(!is.na(primary_value), primary_value > 0, partner_code != 0, cmd_code != "TOTAL") %>%
   select(
     period,
-    reporterCode,
-    partnerCode,
-    cmdCode,
-    primaryValue,
-    fobvalue
+    reporter_code,
+    reporter_iso,
+    partner_code,
+    partner_desc,
+    cmd_code,
+    cmd_desc,
+    primary_value,
+    fobvalue,
+    flow_desc,
+    flow_code
   ) %>%
   mutate(
     # Extraer Capítulo HS2 (primeros 2 dígitos del código del producto)
-    hs2 = substr(cmdCode, 1, 2),
+    hs2 = substr(cmd_code, 1, 2),
     # Convertir monto a Millones de USD para facilitar interpretación
-    val_musd = primaryValue / 1e6
+    val_musd = primary_value / 1e6
   )
 
 # Resumen de calidad de datos
 cat("Registros originales:", nrow(df_comercio), "\n")
 cat("Registros limpios procesados:", nrow(df_clean), "\n")
-cat("Valores NAs en la variable de valor monetario:", sum(is.na(df_clean$primaryValue)), "\n")
+cat("Valores NAs en la variable de valor monetario:", sum(is.na(df_clean$primary_value)), "\n")
 
 ```
 ```{r eval=FALSE, include=FALSE}
@@ -89,7 +118,7 @@ skim(df_clean)
 
 # Resumen de variables numéricas principales (Valores de comercio)
 df_clean %>%
-  select(primaryValue, fobvalue) %>%
+  select(primary_value, fobvalue) %>%
   summary()
 ```
 
@@ -112,17 +141,99 @@ De la estructura original devuelta por la API (47 variables), se seleccionó un 
 
 
 ```{r include=FALSE}
-top_productos <- df_clean %>%
-  group_by(cmdCode) %>%
+top_productos_importacion <- df_clean %>%
+  filter(flow_code == 'M') %>%
+  group_by(cmd_code, cmd_desc) %>%
   summarise(
-    total_val = sum(primaryValue, na.rm = TRUE),
-    promedio_val = mean(primaryValue, na.rm = TRUE),
+    total_val = sum(primary_value, na.rm = TRUE),
+    promedio_val = mean(primary_value, na.rm = TRUE),
     conteo = n()
   ) %>%
   arrange(desc(total_val))
 
 head(top_productos, 10)
+
 ```
 
+```{r include=FALSE}
+top_productos_exportacion <- df_clean %>%
+  filter(flow_code == 'X') %>%
+  group_by(cmd_code, cmd_desc) %>%
+  summarise(
+    total_val = sum(primary_value, na.rm = TRUE),
+    promedio_val = mean(primary_value, na.rm = TRUE),
+    conteo = n()
+  ) %>%
+  arrange(desc(total_val))
 
+```
+
+```{r}
+names(df_clean)
+```
+
+```{r include=FALSE}
+top_partners <- df_clean %>%
+  group_by(partner_code, partner_desc,flow_code) %>%
+  summarise(
+    total_val = sum(primary_value, na.rm = TRUE),
+    promedio_val = mean(primary_value, na.rm = TRUE),
+    conteo = n()
+  ) %>%
+  arrange(desc(total_val))
+
+head(top_partners, 10)
+```
+
+Notamos que el país con el que México ha tenido mayor comercio tanto en exportaciones como importaciones Estados Unidos, incluye Puerto Rico y las Islas Virgenes(código 842)
+
+Ahora, haremos el mismo análisis por categoría
+
+```{r include=FALSE}
+top_hs2_import <- df_clean %>%
+  filter(flow_code == 'M') %>%
+  group_by(hs2) %>%
+  summarise(
+    total_val = sum(primary_value, na.rm = TRUE),
+    promedio_val = mean(primary_value, na.rm = TRUE),
+    conteo = n()
+  ) %>%
+  arrange(desc(conteo))
+```
+
+```{r include=FALSE}
+top_hs2_export <- df_clean %>%
+  filter(flow_code == 'X') %>%
+  group_by(hs2) %>%
+  summarise(
+    total_val = sum(primary_value, na.rm = TRUE),
+    promedio_val = mean(primary_value, na.rm = TRUE),
+    conteo = n()
+  ) %>%
+  arrange(desc(conteo))
+```
+
+El top 5 de de las categorías más vendidas son 28,71,39, 29 y 25, que significan:
+
+### Diccionario del top 5 de capítulos del Sistema Armonizado (HS)
+| HS2 | Capitulo | 
+| :--- | :--- |
+| **`28`** | Productos químicos inorgánicos, compuestos orgánicos o inorgánicos de metales preciosos |
+| **`72`** | Fundición y sus manufacturas |
+| **`39`** | Plástico y sus manufacturas |
+| **`29`** | Productos químicos orgánicos |
+| **`25`** | Sal, azufre, tierras y piedras, yeso, cal y cemento |
+
+
+```{r}
+ggplot(top_productos, aes(x = reorder(cmdCodey, total_val), y = total_val)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Top 10 categorías de productos (HS2) por valor comercial",
+    x = "Capítulo HS2",
+    y = "Valor total (millones USD)"
+  ) +
+  theme_minimal()
+```
 
