@@ -15,7 +15,7 @@ En el presente análisis utiliza información oficial proveniente del repositori
 
 ### ¿Qué representa esta información a grandes rasgos?
 
-A nivel macro, el conjunto de datos extraído documenta el **flujo de importaciones anuales de bienes** hacia el país reportante (México, código M49: `484`) durante el periodo **2022**, desglosado a nivel de transacción individual por producto y país de origen.
+A nivel macro, el conjunto de datos extraído documenta el **flujo comercial anual de bienes (importaciones y exportaciones)** hacia el país reportante (México, código M49: `484`) durante el periodo **2015-2025**, desglosado a nivel de transacción individual por producto y país de origen.
 
 Cada registro en este *dataset* captura tres dimensiones fundamentales del intercambio comercial:
 
@@ -30,56 +30,158 @@ Cada registro en este *dataset* captura tres dimensiones fundamentales del inter
 El objetivo primordial de transformar y estructurar estos registros transaccionales es **evaluar la configuración de la red de abastecimiento internacional**. Mediante este análisis exploratorio y la posterior aplicación del algoritmo de agrupación **K-Means**, se busca pasar de un volumen desagregado de datos comerciales a una **segmentación estratégica de proveedores**, identificando patrones de concentración, diversificación y relevancia económica en las relaciones comerciales del país.
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
 # 1. Carga de librerías esenciales
 library(jsonlite)
 library(dplyr)
 library(tidyr)
 library(ggplot2)
+library(knitr)
 library(scales)
 library(e1071)      # Asimetría (skewness) y Curtosis (kurtosis)
 library(corrplot)   # Matriz de correlación
 library(ggrepel)    # Etiquetas dinámicas en gráficos
 library(gridExtra)  # Disposición de gráficos
+library(cluster)    # Cálculo de silueta y algoritmos de agrupamiento
+library(comtradr)   # Cliente oficial de la API de UN Comtrade
 
 # 2. Carga de la data
-# Descarga de datos comerciales reales (Petición directa para evitar errores de red)
-url_comercio <- "https://comtradeapi.un.org/public/v1/preview/C/A/HS?reporterCode=484&period=2022&flowCode=M"
+# correción: En vez de consultar únicamente el preview de 500 filas de 2022. 
+# Usamos un archivo de respaldo local (.rds) que almacena la descarga 2015-2025 de comtradr sin mostrar la API Key en el documento público. 
+# Si no existe el archivo, lo descarga automáticamente.
 
-# Descargar y decodificar directamente los datos JSON
-datos_json <- jsonlite::fromJSON(url_comercio)
 
-# Convertir la tabla interna a un tibble
-df_comercio <- as_tibble(datos_json$data)
+readRenviron("~/.Renviron")
+archivo_resp_local <- "comtrade_mex_2015_2025.rds"
+necesita_descarga <- TRUE
 
-#str(df_comercio)
+if (file.exists(archivo_resp_local)) {
+  df_comercio_raw <- readRDS(archivo_resp_local)
+  if (!is.null(df_comercio_raw) && nrow(df_comercio_raw) > 0 && ncol(df_comercio_raw) > 5) {
+    necesita_descarga <- FALSE
+  } else {
+    file.remove(archivo_resp_local)
+  }
+}
+# Descarga de UN Comtrade (2015-2025) usando la variable de entorno oculta en ~/.Renviron
+if (necesita_descarga) {
+  if (Sys.getenv("COMTRADE_PRIMARY") == "") {
+    stop("No se encontró COMTRADE_PRIMARY en ~/.Renviron.")
+  }
+
+# Obtenemos únicamente los códigos de 2 dígitos ("01" a "97") validados por el catálogo de comtradr
+  tabla_hs <- ct_get_ref_table("HS")
+  codigos_hs2 <- intersect(sprintf("%02d", 1:99), tabla_hs$id)
+
+  # Bloque 1: 2015 a 2019 (~55,000 registros, debajo del límite de 100,000 de la API)
+  bloque_1 <- ct_get_data(
+    reporter = "MEX",
+    partner = "all_countries",
+    commodity_code = codigos_hs2,
+    start_date = 2015,
+    end_date = 2019,
+    flow_direction = c("import", "export")
+  )
+
+  # Bloque 2: 2020 a 2025 (~55,000 registros, debajo del límite de 100,000 de la API)
+  bloque_2 <- ct_get_data(
+    reporter = "MEX",
+    partner = "all_countries",
+    commodity_code = codigos_hs2,
+    start_date = 2020,
+    end_date = 2025,
+    flow_direction = c("import", "export")
+  )
+
+  df_comercio_raw <- bind_rows(as_tibble(bloque_1), as_tibble(bloque_2))
+
+  if (nrow(df_comercio_raw) > 0) {
+    saveRDS(df_comercio_raw, archivo_resp_local, compress = "xz")
+  }
+}
+
+# Verificación de integridad de la base
+stopifnot("Error: La descarga de Comtrade vino vacía." = nrow(df_comercio_raw) > 0)
+
+# Estandarización de columnas:
+# Si los datos vienen de comtradr (snake_case), renombramos las columnas según el Diccionario de Datos (partnerCode, cmdCode, primaryValue, etc.)
+
+df_comercio <- df_comercio_raw %>%
+rename(
+    reporterCode = any_of("reporter_code"),
+    partnerCode  = any_of("partner_code"),
+    partnerDesc  = any_of("partner_desc"),
+    partner2Code = any_of("partner_2_code"),
+    cmdCode      = any_of("cmd_code"),
+    cmdDesc      = any_of("cmd_desc"),
+    primaryValue = any_of("primary_value"),
+    customsCode  = any_of("customs_code"),
+    motCode      = any_of("mot_code"),
+    flow_code    = any_of("flowCode")
+  )
+
+# Asegurar columnas auxiliares por compatibilidad
+if (!"flow_code" %in% names(df_comercio) && "flow_desc" %in% names(df_comercio)) {
+  df_comercio <- df_comercio %>% mutate(flow_code = flow_desc)
+}
+if (!"partnerDesc" %in% names(df_comercio)) {
+  df_comercio <- df_comercio %>% mutate(partnerDesc = paste("Socio", partnerCode))
+}
+if (!"cmdDesc" %in% names(df_comercio)) {
+  df_comercio <- df_comercio %>% mutate(cmdDesc = paste("Capítulo", substr(cmdCode, 1, 2)))
+}
 
 ```
 Después de decargar nuestros datos, solo nos quedamos con las variables que aportan valor explicativo real para los objetivos del negocio y eliminamos el "ruido" de un dataset que originalmente tiene 47 columnas (donde muchas vienen vacías, constantes o redundantes).
 
+Como la API de un Comtrade mezcla distintos niveles de detalle en una misma tabla, aplicamos estos filtros para no duplicar ni triplicar el valor monetario al sumar por sector:
+
+* **Nos quedamos unicamente con los de 2 dígitos:** `nchar(cmdCode) == 2` y `cmdCode == != "TOTAL"` (omite el total general y los códigos de 4 y 6 dígitos). 
+* **Sin totales mundiales:** `partnerCode !=0`.
+* **Sin desgloses secundarios:** `partner2Code == 0`
+
 ```{r extracción de variables, echo=FALSE}
 # Filtrado de transacciones válidas y selección de variables clave
 df_clean <- df_comercio %>%
-  filter(!is.na(primaryValue), primaryValue > 0, partnerCode != 0) %>%
+  filter(!is.na(primaryValue), primaryValue > 0, partnerCode != 0, partnerCode != "0", !partnerDesc %in% c("World", "Mundo"),
+         cmdCode != "TOTAL", nchar(trimws(as.character(cmdCode))) == 2,
+         if ("partner2Code" %in% names(.)) (is.na(partner2Code) | partner2Code == 0) 
+         else TRUE,
+         if ("customsCode" %in% names(.)) (is.na(customsCode) | customsCode == "C00") 
+         else TRUE,
+         if ("motCode" %in% names(.)) (is.na(motCode) | motCode == 0) 
+         else TRUE
+  ) %>%
   select(
     period,
     reporterCode,
     partnerCode,
+    partnerDesc,
     cmdCode,
+    cmdDesc,
     primaryValue,
-    fobvalue
+    fobvalue,
+    flow_code
   ) %>%
   mutate(
+    año = as.integer(substr(as.character(period), 1, 4)),
     # Extraer Capítulo HS2 (primeros 2 dígitos del código del producto)
-    hs2 = substr(cmdCode, 1, 2),
+    hs2 = substr(trimws(as.character(cmdCode)), 1, 2),
     # Convertir monto a Millones de USD para facilitar interpretación
-    val_musd = primaryValue / 1e6
+    val_musd = primaryValue / 1e6,
+    #Estandarizar el codigo de flujo en "M" (importaciones) y "X" (Exportaciones)
+    flow_code = case_when(
+      toupper(as.character(flow_code)) %in% c("M", "Import", "Imports", "1") ~ "M",
+      toupper(as.character(flow_code)) %in% c("X", "Export", "Exports", "2") ~ "X",
+      TRUE ~ as.character(flow_code)
+    )
   )
 
 # Resumen de calidad de datos
-cat("Registros originales:", nrow(df_comercio), "\n")
-cat("Registros limpios procesados:", nrow(df_clean), "\n")
+cat("Registros originales:", comma(nrow(df_comercio)), "\n")
+cat("Registros limpios a nivel Capítulo HS2:", comma(nrow(df_clean)), "\n")
+cat ("Periodo temporal efectivo en la base limpia:", min(df_clean$año, na.rm = TRUE), "-", max(df_clean$año, na.rm = TRUE), "\n")
 cat("Valores NAs en la variable de valor monetario:", sum(is.na(df_clean$primaryValue)), "\n")
 
 ```
@@ -103,15 +205,15 @@ De la estructura original devuelta por la API (47 variables), se seleccionó un 
 | **`cmdCode`** | Categórica (`chr`) | **Insumo de Diversificación** | Código del producto en el Sistema Armonizado (HS). Permite extraer los primeros 2 dígitos (`hs2`) para medir cuántos capítulos arancelarios abastece cada socio. |
 | **`primaryValue`** | Numérica (`dbl`) | **Métrica de Escala** | Valor comercial oficial estandarizado en USD. Insumo fundamental para calcular el volumen total de compra, cuotas de mercado y el peso sectorial para el $HHI$. |
 | **`fobvalue`** | Numérica (`dbl`) | **Validación Financiera** | Valor *Free On Board* (puesto a bordo) en USD. Permite auditar la consistencia contable del registro respecto a `primaryValue`. |
-| **`period`** | Categórica (`chr`) | **Control Temporal** | Identifica el año analizado (`"2022"`). Garantiza la comparabilidad temporal de las transacciones. |
-| **`reporterCode`** | Categórica (`int`) | **Filtro de Alcance** | Código M49 del país comprador (`484` - México). Delimita el análisis a la balanza de importaciones de un único país. |
+| **`period`** | Categórica (`chr`) | **Control Temporal** | Identifica el año de la transacción (**2015 a 2025**`). Garantiza la comparabilidad temporal de las transacciones. |
+| **`flow_code`** | Categórica (`chr`) | **Dirección del flujo** | Distingue entre importaciones `M` y esportaciones `X`, permitiendo separar la red de abastecimiento de la red de ventas externas |
 
 ---
 
 ### Análisis de variables clave
 
 
-```{r include=FALSE}
+```{r echo=TRUE}
 top_productos <- df_clean %>%
   group_by(cmdCode) %>%
   summarise(
