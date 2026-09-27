@@ -11,7 +11,7 @@ output:
 
 ## Contexto y Alcance de los Datos
 
-En el presente análisis utiliza información oficial proveniente del repositorio **UN Comtrade** (*United Nations International Trade Statistics Database*), gestionado por la División de Estadística de las Naciones Unidas. Esta base de datos es el estándar global para el registro y monitoreo del comercio internacional de mercancías entre países.
+En el presente análisis utiliza información oficial proveniente del repositorio **UN Comtrade** (*United Nations International Trade Statistics Database*), gestionado por la División de Estadística de las Naciones Unidas. Esta base de datos es el estándar global para el registro y monitoreo del comercio internacional de mercancías entre países. El presente análisis será acotado a México como país que reporta, así como a productos con código de 2 dígitos conservando movimientos de importación y exportación.
 
 ### ¿Qué representa esta información a grandes rasgos?
 
@@ -27,7 +27,7 @@ Cada registro en este *dataset* captura tres dimensiones fundamentales del inter
 
 ### Propósito del Análisis
 
-El objetivo primordial de transformar y estructurar estos registros transaccionales es **evaluar la configuración de la red de abastecimiento internacional**. Mediante este análisis exploratorio y la posterior aplicación del algoritmo de agrupación **K-Means**, se busca pasar de un volumen desagregado de datos comerciales a una **segmentación estratégica de proveedores**, identificando patrones de concentración, diversificación y relevancia económica en las relaciones comerciales del país.
+El objetivo primordial de transformar y estructurar estos registros transaccionales es **evaluar la configuración de la red de comercio en México**. Mediante este análisis exploratorio y la posterior aplicación del algoritmo de agrupación **K-Means**, se busca pasar de un volumen desagregado de datos comerciales a una **segmentación estratégica de proveedores**, identificando patrones de concentración, diversificación y relevancia económica en las relaciones comerciales del país.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
@@ -43,44 +43,12 @@ library(e1071)      # Asimetría (skewness) y Curtosis (kurtosis)
 library(corrplot)   # Matriz de correlación
 library(ggrepel)    # Etiquetas dinámicas en gráficos
 library(gridExtra)  # Disposición de gráficos
-library(skimr)
-library(ggplot2)
-library(comtradr) #lee la API
-```
-
-
-```{r}
-
-Sys.setenv('COMTRADE_PRIMARY' = '0d520a493f894ae3bb649b53ff6ab916')
-
-# 2. Carga de la data
-# Descarga de datos comerciales reales (Petición directa para evitar errores de red)
-url_comercio <- ct_get_data(
-    reporter = "MEX",
-   partner = "all_countries",
-    commodity_code = "everything",
-  start_date = 2015,
-  end_date = 2025,
-  flow_direction = c("import", "export")
-)
 library(cluster)    # Cálculo de silueta y algoritmos de agrupamiento
 library(comtradr)   # Cliente oficial de la API de UN Comtrade
+library(scales)
+library(stringr)
 
 # 2. Carga de la data
-# Descarga de datos comerciales reales (Petición directa para evitar errores de red)
-url_comercio <- "https://comtradeapi.un.org/public/v1/preview/C/A/HS"
-
-# Descargar y decodificar directamente los datos JSON
-datos_json <- jsonlite::fromJSON(url_comercio)
-
-```
-
-```{r}
-# Convertir la tabla interna a un tibble
-df_comercio <- as_tibble(datos_json$data)
-
-head(df_comercio)
-str(df_comercio)
 # correción: En vez de consultar únicamente el preview de 500 filas de 2022. 
 # Usamos un archivo de respaldo local (.rds) que almacena la descarga 2015-2025 de comtradr sin mostrar la API Key en el documento público. 
 # Si no existe el archivo, lo descarga automáticamente.
@@ -179,7 +147,6 @@ Como la API de un Comtrade mezcla distintos niveles de detalle en una misma tabl
 ```{r extracción de variables, echo=FALSE}
 # Filtrado de transacciones válidas y selección de variables clave
 df_clean <- df_comercio %>%
-  filter(!is.na(primary_value), primary_value > 0, partner_code != 0, cmd_code != "TOTAL") %>%
   filter(!is.na(primaryValue), primaryValue > 0, partnerCode != 0, partnerCode != "0", !partnerDesc %in% c("World", "Mundo"),
          cmdCode != "TOTAL", nchar(trimws(as.character(cmdCode))) == 2,
          if ("partner2Code" %in% names(.)) (is.na(partner2Code) | partner2Code == 0) 
@@ -191,16 +158,6 @@ df_clean <- df_comercio %>%
   ) %>%
   select(
     period,
-    reporter_code,
-    reporter_iso,
-    partner_code,
-    partner_desc,
-    cmd_code,
-    cmd_desc,
-    primary_value,
-    fobvalue,
-    flow_desc,
-    flow_code
     reporterCode,
     partnerCode,
     partnerDesc,
@@ -208,15 +165,14 @@ df_clean <- df_comercio %>%
     cmdDesc,
     primaryValue,
     fobvalue,
-    flow_code
+    flow_code,
+    flow_desc
   ) %>%
   mutate(
     año = as.integer(substr(as.character(period), 1, 4)),
     # Extraer Capítulo HS2 (primeros 2 dígitos del código del producto)
-    hs2 = substr(cmd_code, 1, 2),
     hs2 = substr(trimws(as.character(cmdCode)), 1, 2),
     # Convertir monto a Millones de USD para facilitar interpretación
-    val_musd = primary_value / 1e6
     val_musd = primaryValue / 1e6,
     #Estandarizar el codigo de flujo en "M" (importaciones) y "X" (Exportaciones)
     flow_code = case_when(
@@ -227,9 +183,6 @@ df_clean <- df_comercio %>%
   )
 
 # Resumen de calidad de datos
-cat("Registros originales:", nrow(df_comercio), "\n")
-cat("Registros limpios procesados:", nrow(df_clean), "\n")
-cat("Valores NAs en la variable de valor monetario:", sum(is.na(df_clean$primary_value)), "\n")
 cat("Registros originales:", comma(nrow(df_comercio)), "\n")
 cat("Registros limpios a nivel Capítulo HS2:", comma(nrow(df_clean)), "\n")
 cat ("Periodo temporal efectivo en la base limpia:", min(df_clean$año, na.rm = TRUE), "-", max(df_clean$año, na.rm = TRUE), "\n")
@@ -242,8 +195,21 @@ skim(df_clean)
 
 # Resumen de variables numéricas principales (Valores de comercio)
 df_clean %>%
-  select(primary_value, fobvalue) %>%
+  select(primaryValue, fobvalue) %>%
   summary()
+```
+```{r}
+# Ver qué tipo de dato tiene cada columna
+str(df_clean)
+
+# Separar automáticamente por tipo
+variables_categoricas <- df_clean %>%
+  select(where(is.character)) %>%
+  names()
+
+variables_continuas <- df_clean %>%
+  select(where(is.numeric)) %>%
+  names()
 ```
 
 De la estructura original devuelta por la API (47 variables), se seleccionó un subconjunto de **6 variables**. Esta reducción sigue un principio de parsimonia: elimina variables vacías, constantes o redundantes, conservando únicamente las necesarias para la ingeniería de características del modelo de *clustering*.
@@ -264,103 +230,190 @@ De la estructura original devuelta por la API (47 variables), se seleccionó un 
 ### Análisis de variables clave
 
 
-```{r include=FALSE}
-top_productos_importacion <- df_clean %>%
-  filter(flow_code == 'M') %>%
-  group_by(cmd_code, cmd_desc) %>%
-```{r echo=TRUE}
+```{r echo=FALSE}
 top_productos <- df_clean %>%
   group_by(cmdCode) %>%
   summarise(
-    total_val = sum(primary_value, na.rm = TRUE),
-    promedio_val = mean(primary_value, na.rm = TRUE),
+    total_val = sum(primaryValue, na.rm = TRUE),
+    promedio_val = mean(primaryValue, na.rm = TRUE),
     conteo = n()
   ) %>%
   arrange(desc(total_val))
 
 head(top_productos, 10)
-
 ```
 
-```{r include=FALSE}
-top_productos_exportacion <- df_clean %>%
-  filter(flow_code == 'X') %>%
-  group_by(cmd_code, cmd_desc) %>%
-  summarise(
-    total_val = sum(primary_value, na.rm = TRUE),
-    promedio_val = mean(primary_value, na.rm = TRUE),
-    conteo = n()
-  ) %>%
-  arrange(desc(total_val))
 
-```
+```{r echo=FALSE}
+# Datos por año y movimiento
+balanza_anual <- df_clean %>%
+  group_by(period, flow_desc) %>%
+  summarise(total_primaryValue = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop")
 
-```{r}
-names(df_clean)
-```
+# Total de exportaciones e importaciones
+totales_anuales <- balanza_anual %>%
+  group_by(period) %>%
+  summarise(total_general = sum(total_primaryValue, na.rm = TRUE))
 
-```{r include=FALSE}
-top_partners <- df_clean %>%
-  group_by(partner_code, partner_desc,flow_code) %>%
-  summarise(
-    total_val = sum(primary_value, na.rm = TRUE),
-    promedio_val = mean(primary_value, na.rm = TRUE),
-    conteo = n()
-  ) %>%
-  arrange(desc(total_val))
-
-head(top_partners, 10)
-```
-
-Notamos que el país con el que México ha tenido mayor comercio tanto en exportaciones como importaciones Estados Unidos, incluye Puerto Rico y las Islas Virgenes(código 842)
-
-Ahora, haremos el mismo análisis por categoría
-
-```{r include=FALSE}
-top_hs2_import <- df_clean %>%
-  filter(flow_code == 'M') %>%
-  group_by(hs2) %>%
-  summarise(
-    total_val = sum(primary_value, na.rm = TRUE),
-    promedio_val = mean(primary_value, na.rm = TRUE),
-    conteo = n()
-  ) %>%
-  arrange(desc(conteo))
-```
-
-```{r include=FALSE}
-top_hs2_export <- df_clean %>%
-  filter(flow_code == 'X') %>%
-  group_by(hs2) %>%
-  summarise(
-    total_val = sum(primary_value, na.rm = TRUE),
-    promedio_val = mean(primary_value, na.rm = TRUE),
-    conteo = n()
-  ) %>%
-  arrange(desc(conteo))
-```
-
-El top 5 de de las categorías más vendidas son 28,71,39, 29 y 25, que significan:
-
-### Diccionario del top 5 de capítulos del Sistema Armonizado (HS)
-| HS2 | Capitulo | 
-| :--- | :--- |
-| **`28`** | Productos químicos inorgánicos, compuestos orgánicos o inorgánicos de metales preciosos |
-| **`72`** | Fundición y sus manufacturas |
-| **`39`** | Plástico y sus manufacturas |
-| **`29`** | Productos químicos orgánicos |
-| **`25`** | Sal, azufre, tierras y piedras, yeso, cal y cemento |
-
-
-```{r}
-ggplot(top_productos, aes(x = reorder(cmdCodey, total_val), y = total_val)) +
-  geom_col(fill = "steelblue") +
-  coord_flip() +
-  labs(
-    title = "Top 10 categorías de productos (HS2) por valor comercial",
-    x = "Capítulo HS2",
-    y = "Valor total (millones USD)"
+#Gráfica apreciar mejor los movimientos de importaciones y exportaciones por año.
+ggplot(balanza_anual, aes(x = factor(period), y = total_primaryValue, fill = flow_desc)) +
+  geom_col(position = "stack") +
+  geom_text(
+    aes(label = comma(total_primaryValue)),
+    position = position_stack(vjust = 0.5),
+    color = "white", size = 3, fontface = "bold"
   ) +
-  theme_minimal()
+  geom_text(
+    data = totales_anuales,
+    aes(x = factor(period), y = total_general, label = comma(total_general)),
+    inherit.aes = FALSE,
+    vjust = -0.5, size = 3.2, fontface = "bold"
+  ) +
+  scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.1))) +
+  scale_fill_manual(values = c("Export" = "#AA98A9", "Import" = "#8C92AC")) +
+  labs(
+    title = "Balanza comercial por año: Exportaciones e Importaciones",
+    y = "Valor total (M USD)",
+    fill = "Movimiento"
+  ) +
+  theme_minimal()+
+  theme(axis.title.x = element_blank(),
+        axis.text.y = element_blank(),  
+    axis.ticks.y = element_blank() )
+
 ```
+
+Notamos que en general el comercio de México con otros paises fue incrementando al pasar de los años, saldo en 2020 que fue el año de la pandemia, donde tanto importanciones como exportaciones tienen una caida importante. 
+Una vez que hemos visto el comportamiento general de la balanza, una pregunta que podríamos plantear sería ¿Con qué paises se ha dado mayores movimientos importación y exportación en el periodo de observación? 
+
+```{r echo=FALSE}
+# Top 5 paises en exportciones
+t5_exporta <- df_clean %>%
+  filter(flow_desc == "Export") %>%
+  group_by(partnerDesc) %>%
+  summarise(total_valor = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop") %>%
+  arrange(desc(total_valor)) %>%
+  slice_head(n = 5)
+
+print(t5_exporta)
+
+# Top 5 países en importaciones
+t5_importa <- df_clean %>%
+  filter(flow_desc == "Import") %>%
+  group_by(partnerDesc) %>%
+  summarise(total_valor = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop") %>%
+  arrange(desc(total_valor)) %>%
+  slice_head(n = 5)
+
+print(t5_importa)
+
+```
+
+Notamos que el país con el que mayormente México comercia es con USA tanto en importaciones como exportaciones, sin embargo, también podemos resaltar que en las exportaciones tenemos una monto mayor al de importaciones, por lo cual podemos afirmar que mexico tiene un superavit. 
+
+
+```{r echo=FALSE}
+
+#mayor cantidad de productos para exportación 
+top5_productos_export_usa <- df_clean %>%
+  filter(flow_desc == "Export", str_detect(partnerDesc, regex("united states|usa", ignore_case = TRUE))) %>%
+  group_by(cmdCode, cmdDesc) %>%
+  summarise(total_valor = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop") %>%
+  arrange(desc(total_valor)) %>%
+  slice_head(n = 5)
+
+print(top5_productos_export_usa)
+
+#mayor cantidad de productos para importación 
+top5_productos_import_usa <- df_clean %>%
+  filter(flow_desc == "Import", str_detect(partnerDesc, regex("united states|usa", ignore_case = TRUE))) %>%
+  group_by(cmdCode, cmdDesc) %>%
+  summarise(total_valor = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop") %>%
+  arrange(desc(total_valor)) %>%
+  slice_head(n = 5)
+
+print(top5_productos_import_usa)
+```
+Notamos que con USA las categorías que se tienen en común tanto de exportación como de importación son Vehículos, maquinaria eléctrica y categoría 84 correspondiente a reactores nucleares, bolers, maquinaria y partes para estos.
+
+
+```{r}
+# Exportaciones
+# Top 5 de categorías (por valor total acumulado)
+top5_cmd_export <- df_clean %>%
+  filter(flow_desc == "Export") %>%
+  group_by(cmdCode) %>%
+  summarise(total_valor = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop") %>%
+  arrange(desc(total_valor)) %>%
+  slice_head(n = 5) %>%
+  pull(cmdCode)
+
+# Histórico de las 5 categorías
+evolucion_export <- df_clean %>%
+  filter(flow_desc == "Export", cmdCode %in% top5_cmd_export) %>%
+  group_by(period, cmdCode) %>%
+  summarise(total_valor = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop")
+
+# Gráfica de líneas
+
+colores_export <- setNames(
+  c("#848482", "#6082B6", "#8C92AC", "#BEBFC5", "#98817B"),
+  unique(evolucion_export$cmdDesc)
+)
+
+ggplot(evolucion_export, aes(x = factor(period), y = total_valor, color = cmdCode, group = cmdCode)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_color_manual(values = colores_export) +
+  scale_y_continuous(labels = comma, expand = expansion(mult = c(0.05, 0.15))) +
+  labs(
+    title = "Histórico del top 5 en exportación",
+    x = "Año",
+    y = "Valor total (M USD)",
+    color = "Categoría"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom", legend.text = element_text(size = 8),axis.title.x = element_blank(), axis.ticks.y = element_blank() )
+```
+Notamos que la categoría 87, 84 y 27 han tenido un valor de mercado en exportación en constante asenso, mientras que las categorías 90 y 87 han sido más constantes a lo largo de los años sin tanto crecimiento. 
+```{r}
+# Imporataciones
+# Top 5 de categorías (por valor total acumulado)
+top5_cmd_import <- df_clean %>%
+  filter(flow_desc == "Import") %>%
+  group_by(cmdCode) %>%
+  summarise(total_valor = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop") %>%
+  arrange(desc(total_valor)) %>%
+  slice_head(n = 5) %>%
+  pull(cmdCode)
+
+# Histórico de las 5 categorías
+evolucion_import <- df_clean %>%
+  filter(flow_desc == "Import", cmdCode %in% top5_cmd_import) %>%
+  group_by(period, cmdCode) %>%
+  summarise(total_valor = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop")
+
+# Gráfica de líneas
+
+colores_import <- setNames(
+  c("#848482", "#6082B6", "#8C92AC", "#BEBFC5", "#98817B"),
+  unique(evolucion_export$cmdDesc)
+)
+
+ggplot(evolucion_import, aes(x = factor(period), y = total_valor, color = cmdCode, group = cmdCode)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_color_manual(values = colores_import) +
+  scale_y_continuous(labels = comma, expand = expansion(mult = c(0.05, 0.15))) +
+  labs(
+    title = "Histórico del top 5 en importaciones",
+    x = "Año",
+    y = "Valor total (M USD)",
+    color = "Categoría"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom", legend.text = element_text(size = 8),axis.title.x = element_blank(), axis.ticks.y = element_blank() )
+```
+
+Notamos que la categoría 39, 84 y 85 han tenido un desempeño constante a lo largo de los años, mientras que la 87 y 27 han subido y bajado en el valor de las importaciones.
 
