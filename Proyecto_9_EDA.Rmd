@@ -68,16 +68,16 @@ library(comtradr)   # Cliente oficial de la API de UN Comtrade
 
 # 2. Carga de la data
 # Descarga de datos comerciales reales (Petición directa para evitar errores de red)
-#url_comercio <- "https://comtradeapi.un.org/public/v1/preview/C/A/HS"
+url_comercio <- "https://comtradeapi.un.org/public/v1/preview/C/A/HS"
 
 # Descargar y decodificar directamente los datos JSON
-#datos_json <- jsonlite::fromJSON(url_comercio)
+datos_json <- jsonlite::fromJSON(url_comercio)
 
 ```
 
 ```{r}
 # Convertir la tabla interna a un tibble
-df_comercio <- as_tibble(url_comercio)
+df_comercio <- as_tibble(datos_json$data)
 
 head(df_comercio)
 str(df_comercio)
