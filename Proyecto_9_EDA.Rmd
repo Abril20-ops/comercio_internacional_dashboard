@@ -15,12 +15,12 @@ En el presente análisis utiliza información oficial proveniente del repositori
 
 ### ¿Qué representa esta información a grandes rasgos?
 
-A nivel macro, el conjunto de datos extraído documenta el **flujo comercial anual de bienes (importaciones y exportaciones)** hacia el país reportante (México, código M49: `484`) durante el periodo **2015-2025**, desglosado a nivel de transacción individual por producto y país de origen.
+A nivel macro, el conjunto de datos extraído documenta el **flujo comercial anual de bienes (importaciones y exportaciones)** hacia el país reportante (México, código M49: `484`) durante el periodo **2015-2025**, desglosado por producto y país socio comercial.
 
 Cada registro en este *dataset* captura tres dimensiones fundamentales del intercambio comercial:
 
-1. **Estructura Mercantil (¿Qué se compra?):** Identificado mediante el código del **Sistema Armonizado (HS)** de clasificación arancelaria. En este estudio, los productos se agregan a nivel de **Capítulo (HS a 2 dígitos)** para evaluar los sectores económicos de procedencia.
-2. **Origen Geográfico (¿A quién se le compra?):** Representado por el código del país socio o proveedor (`partnerCode`), permitiendo rastrear la procedencia geográfica de las mercancías.
+1. **Estructura Mercantil (¿Qué se comercia?):** Identificado mediante el código del **Sistema Armonizado (HS)** de clasificación arancelaria. En este estudio, los productos se agregan a nivel de **Capítulo (HS a 2 dígitos)** para evaluar los sectores económicos de procedencia.
+2. **Origen Geográfico (¿A quién se le compra?/¿de donde proviene?):** Representado por el código del país socio o proveedor (`partnerCode`), permitiendo rastrear la procedencia geográfica de las mercancías.
 3. **Magnitud Económica (¿Cuánto se compra?):** Expresado a través del valor comercial oficial en dólares estadounidenses (`primaryValue` / `fobvalue`), que mide el volumen financiero del intercambio.
 
 ---
@@ -140,7 +140,7 @@ Descargamos datos anuales de UN Comtrade sobre el comercio de bienes reportado p
 
 Como la API de un Comtrade mezcla distintos niveles de detalle en una misma tabla, aplicamos estos filtros para no duplicar ni triplicar el valor monetario al sumar por sector:
 
-* **Nos quedamos unicamente con los de 2 dígitos:** `nchar(cmdCode) == 2` y `cmdCode == != "TOTAL"` (omite el total general y los códigos de 4 y 6 dígitos). 
+* **Nos quedamos unicamente con los de 2 dígitos:** `nchar(cmdCode) == 2` y `cmdCode != "TOTAL"` (omite el total general y los códigos de 4 y 6 dígitos). 
 * **Sin totales mundiales:** `partnerCode !=0`.
 * **Sin desgloses secundarios:** `partner2Code == 0`
 
@@ -1016,4 +1016,158 @@ cat("Capítulos incluidos en el modelo:", nrow(datos_modelo), "\n")
 ```{r}
 str(datos_modelo)
 ```
+Para determinar el número de grupos a utilizar en K-Means, se evaluaron soluciones entre (K=2) y (K=8). Para cada alternativa se calcularon dos métricas: la suma de cuadrados dentro de los clusters (WSS), que mide la dispersión interna de los grupos, y el coeficiente silhouette promedio, que evalúa qué tan bien separadas se encuentran las observaciones entre clusters.
+
+```{r}
+# ============================================================
+# 4. Selección del número de clusters
+# ============================================================
+
+set.seed(123)
+
+# Probamos varios valores de K
+k_values <- 2:8
+
+evaluacion_k <- data.frame(
+  k = k_values,
+  wss = NA,
+  silhouette = NA
+)
+
+for (i in seq_along(k_values)) {
+
+  k <- k_values[i]
+
+  modelo_temp <- kmeans(
+    matriz_estandar,
+    centers = k,
+    nstart = 50
+  )
+
+  # Suma de cuadrados dentro de los clusters
+  evaluacion_k$wss[i] <- modelo_temp$tot.withinss
+
+  # Silhouette promedio
+  sil <- cluster::silhouette(
+    modelo_temp$cluster,
+    dist(matriz_estandar)
+  )
+
+  evaluacion_k$silhouette[i] <- mean(sil[, "sil_width"])
+}
+
+knitr::kable(
+  evaluacion_k,
+  digits = 3,
+  caption = "Evaluación del número de clusters"
+)
+
+```
+
+La WSS disminuye conforme aumenta el número de clusters, comportamiento esperado en K-Means debido a que una mayor cantidad de grupos permite reducir la variabilidad interna. Por ello, esta métrica no debe interpretarse de manera aislada.
+
+El valor más alto de silhouette se obtuvo con (K=2), con un valor de 0.511, superior al observado para las demás alternativas. Esto sugiere que la solución de dos clusters presenta la mejor separación relativa entre grupos dentro de las opciones evaluadas.
+
+Por esta razón, se seleccionó inicialmente (K=2) para ajustar el modelo final. No obstante, además del criterio estadístico, se revisará la composición y el perfil de los clusters para verificar que la solución tenga una interpretación económica adecuada.
+
+```{r}
+# Modelo K-Means final con K = 2
+set.seed(123)
+
+k_elegido <- 2
+
+modelo_kmeans <- kmeans(
+  matriz_estandar,
+  centers = k_elegido,
+  nstart = 100
+)
+
+# Número de capítulos en cada cluster
+table(modelo_kmeans$cluster)
+
+# Centroides en variables estandarizadas
+modelo_kmeans$centers
+
+```
+El modelo K-Means con (K=2) generó dos grupos de tamaños muy distintos: el cluster 1 contiene 7 capítulos HS2, mientras que el cluster 2 contiene 89 capítulos.
+Esta diferencia en tamaño no implica por sí misma que el agrupamiento sea incorrecto. Sin embargo, sugiere que el algoritmo está identificando un conjunto reducido de capítulos con características considerablemente distintas respecto al resto de las importaciones. Por ello, antes de interpretar los grupos como perfiles económicos definitivos, es necesario revisar qué capítulos integran cada cluster y cuáles variables explican principalmente esta separación.
+
+Los centroides estandarizados muestran que la principal diferencia entre los dos clusters se encuentra en el peso económico de los capítulos. El cluster 1 presenta un valor de peso_log considerablemente superior al promedio, mientras que el cluster 2 se encuentra ligeramente por debajo.
+
+El cluster 1 también presenta, en promedio, una reducción relativa en su participación dentro de las importaciones y un aumento ligeramente mayor de la concentración de proveedores. En contraste, el cluster 2 reúne a la mayoría de los capítulos y presenta valores más cercanos al promedio general.
+
+Debido a que los centroides se encuentran expresados en unidades estandarizadas, estos valores muestran diferencias relativas respecto al promedio y no deben interpretarse directamente como 
+
+
+```{r}
+# Incorporar la asignación de cluster a cada capítulo
+datos_clusters <- datos_modelo %>%
+  mutate(
+    cluster = factor(modelo_kmeans$cluster)
+  )
+
+# Ver qué capítulos integran cada grupo
+datos_clusters %>%
+  arrange(cluster, desc(participacion_media)) %>%
+  select(
+    cluster,
+    hs2,
+    capitulo,
+    hhi_medio,
+    cambio_hhi,
+    participacion_media,
+    cambio_peso_pp
+  ) %>%
+  knitr::kable(
+    digits = 3,
+    caption = "Capítulos HS2 asignados a cada cluster"
+  )
+
+
+```
+
+La solución con \(K=2\) asignó **7 capítulos al cluster 1 y 89 al cluster 2**. El primer grupo está integrado por equipo eléctrico (HS85), maquinaria mecánica (HS84), combustibles minerales (HS27), plásticos (HS39), instrumentos ópticos y médicos (HS90), artículos de hierro o acero (HS73) y productos químicos orgánicos (HS29).
+
+Los capítulos del cluster 1 se caracterizan principalmente por tener una participación relativamente elevada dentro de las importaciones mexicanas y, en todos los casos, por haber reducido su participación entre el periodo inicial y final considerados. Sin embargo, no presentan un nivel homogéneo de concentración de proveedores: su HHI medio varía considerablemente entre capítulos.
+
+Por lo tanto, la separación obtenida con \(K=2\) parece estar determinada en mayor medida por la importancia económica y su cambio en el tiempo que por un patrón común de concentración. Esto debe considerarse al interpretar los clusters, ya que el objetivo del análisis es estudiar conjuntamente ambas dimensiones.
+
+
+
+
+```{r}
+perfil_clusters <- datos_clusters %>%
+  group_by(cluster) %>%
+  summarise(
+    capitulos = n(),
+    hhi_medio = mean(hhi_medio),
+    cambio_hhi = mean(cambio_hhi),
+    participacion_media = mean(participacion_media),
+    cambio_peso_pp = mean(cambio_peso_pp),
+    .groups = "drop"
+  )
+
+perfil_clusters %>%
+  mutate(
+    participacion_media_pct = 100 * participacion_media
+  ) %>%
+  select(
+    cluster,
+    capitulos,
+    hhi_medio,
+    cambio_hhi,
+    participacion_media_pct,
+    cambio_peso_pp
+  ) %>%
+  knitr::kable(
+    digits = 3,
+    caption = "Perfil promedio de los clusters en unidades originales"
+  )
+```
+La comparación de los perfiles promedio muestra que la principal diferencia entre los dos clusters corresponde al peso económico de los capítulos dentro de las importaciones mexicanas. Los siete capítulos del cluster 1 representan, en promedio, 8.27% de las importaciones, mientras que los 89 capítulos del cluster 2 representan aproximadamente 0.43%.
+
+En contraste, los niveles medios de concentración son similares entre ambos grupos: el HHI promedio es 0.369 en el cluster 1 y 0.390 en el cluster 2. Asimismo, los cambios promedio del HHI son relativamente pequeños en ambos casos.
+
+Por lo tanto, aunque (K=2) presenta la mayor silhouette promedio entre las alternativas evaluadas, la separación obtenida está determinada principalmente por la importancia económica de los capítulos y no genera una diferenciación clara en términos de concentración de proveedores. Debido a ello, resulta conveniente analizar también una solución con un mayor número de clusters antes de seleccionar el modelo definitivo.
+
 
