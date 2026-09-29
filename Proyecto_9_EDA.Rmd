@@ -1422,3 +1422,20 @@ Por otro lado, los resultados son consistentes con la hipótesis planteada: la c
 
 Por ultimo, aunque el coeficiente *silhouette* promedio alcanzó su valor máximo en \(K=2\) (`0.511`), el análisis de perfiles demostró que dos grupos separan a los capítulos casi exclusivamente por su escala económica (`8.27%` frente a `0.43%` de participación media), dejando niveles de HHI similares en ambos grupos. Ampliar el agrupamiento a \(K=4\) permitió distinguir perfiles que separan tanto el peso económico como el nivel y la dirección del cambio en el HHI.
 
+```{r exportar-dashboard, include=FALSE}
+dir.create("datos", showWarnings = FALSE)
+
+   saveRDS(datos_clusters4, "datos/clusters_k4.rds")
+   saveRDS(saldo_anual, "datos/saldo_anual.rds")
+
+   socios_top5 <- por_socio %>%
+     filter(flow_code == "M", !partnerCode %in% codigos_no_especificados) %>%
+     group_by(año, hs2) %>%
+     mutate(cuota = valor_socio_usd / sum(valor_socio_usd)) %>%
+     slice_max(cuota, n = 5, with_ties = FALSE) %>%
+     ungroup() %>%
+     select(año, hs2, socio_nombre, cuota, valor_socio_usd)
+   saveRDS(socios_top5, "datos/socios_top5.rds")
+```
+
+
