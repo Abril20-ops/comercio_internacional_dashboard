@@ -1401,15 +1401,6 @@ ggplot(datos_clusters4, aes(x = participacion_media, y = hhi_medio,
 ```
 En esta gráfica, la línea horizontal punteada en cero separa a los capítulos que aumentaron su concentración entre 2015–2017 y 2023–2025 (arriba) de aquellos que la redujeron (abajo). Se aprecia que entre los capítulos de gran peso comercial, maquinaria mecánica (`84`) y vehículos (`87`) se ubican por debajo de cero (disminución del HHI), mientras que combustibles minerales (`27`) se ubica por encima de cero al haber incrementado la proporción del valor concentrado en su proveedor principal.
 
-Al evaluar qué capítulos HS2 de las importaciones mexicanas combinan mayor importancia económica y concentración de proveedores entre 2015 y 2025, observamos un contraste claro entre las manufacturas principales y el sector energético y agroalimentario:
-   * Los capítulos de mayor valor importado —**equipo eléctrico (`HS85`)**, **maquinaria mecánica (`HS84`)** y **vehículos y autopartes (`HS87`)**— mantienen niveles de concentración moderados o bajos y registraron una disminución en la cuota de su proveedor principal (Estados Unidos) y en su HHI entre el inicio y el final del periodo.
-   * En cambio, **combustibles minerales (`HS27`)**, junto con capítulos agroalimentarios de valor relevante como **cereales (`HS10`)** y **semillas oleaginosas (`HS12`)**, combinan una participación importante dentro de las importaciones con niveles de concentración muy elevados, mostrando además un aumento del HHI en el caso de los combustibles.
-
-
-Por otro lado, los resultados son consistentes con la hipótesis planteada: la concentración de proveedores no cambió de la misma manera en todos los capítulos. Mientras que una parte amplia de los capítulos manufactureros intermedios redujo su HHI entre 2015–2017 y 2023–2025, otros capítulos de alta concentración mantuvieron o incrementaron el peso de su socio principal.
-
-Por ultimo, aunque el coeficiente *silhouette* promedio alcanzó su valor máximo en \(K=2\) (`0.511`), el análisis de perfiles demostró que dos grupos separan a los capítulos casi exclusivamente por su escala económica (`8.27%` frente a `0.43%` de participación media), dejando niveles de HHI similares en ambos grupos. Ampliar el agrupamiento a \(K=4\) permitió distinguir perfiles que separan tanto el peso económico como el nivel y la dirección del cambio en el HHI.
-
 ### Limitaciones e interpretación de los resultados
 
 En la gráfica del Método del Codo se ve que el avance más importante ocurre al pasar de 2 a 4 grupos. A partir de 5 y hasta 8 grupos la línea se aplana casi por completo, lo que significa que duplicamos la cantidad de grupos sin obtener una mejora relevante en el resultado.
@@ -1420,4 +1411,14 @@ Como se documentó en la sección de preparación del modelo, en años recientes
 
 Los códigos de dos dígitos (HS2) reúnen sectores completos (como toda la electrónica o todos los vehículos) y no productos individuales. Por eso, aunque un sector completo tenga sus compras bien repartidas entre varios países, dentro de él todavía pueden existir productos muy específicos (a nivel de cuatro o seis dígitos) que dependan de un solo proveedor. Además, estos números reflejan cómo se distribuye el dinero de las compras, pero no indican qué tan fácil sería cambiar de vendedor en la práctica ni explican por sí solos las causas de esos cambios.
 
+### Conclusiones 
+
+Al evaluar qué capítulos HS2 de las importaciones mexicanas combinan mayor importancia económica y concentración de proveedores entre 2015 y 2025, observamos un contraste claro entre las manufacturas principales y el sector energético y agroalimentario:
+   * Los capítulos de mayor valor importado —**equipo eléctrico (`HS85`)**, **maquinaria mecánica (`HS84`)** y **vehículos y autopartes (`HS87`)**— mantienen niveles de concentración moderados o bajos y registraron una disminución en la cuota de su proveedor principal (Estados Unidos) y en su HHI entre el inicio y el final del periodo.
+   * En cambio, **combustibles minerales (`HS27`)**, junto con capítulos agroalimentarios de valor relevante como **cereales (`HS10`)** y **semillas oleaginosas (`HS12`)**, combinan una participación importante dentro de las importaciones con niveles de concentración muy elevados, mostrando además un aumento del HHI en el caso de los combustibles.
+
+
+Por otro lado, los resultados son consistentes con la hipótesis planteada: la concentración de proveedores no cambió de la misma manera en todos los capítulos. Mientras que una parte amplia de los capítulos manufactureros intermedios redujo su HHI entre 2015–2017 y 2023–2025, otros capítulos de alta concentración mantuvieron o incrementaron el peso de su socio principal.
+
+Por ultimo, aunque el coeficiente *silhouette* promedio alcanzó su valor máximo en \(K=2\) (`0.511`), el análisis de perfiles demostró que dos grupos separan a los capítulos casi exclusivamente por su escala económica (`8.27%` frente a `0.43%` de participación media), dejando niveles de HHI similares en ambos grupos. Ampliar el agrupamiento a \(K=4\) permitió distinguir perfiles que separan tanto el peso económico como el nivel y la dirección del cambio en el HHI.
 
