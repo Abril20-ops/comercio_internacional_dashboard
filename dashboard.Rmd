@@ -136,7 +136,7 @@ Este archivo compila desde el principio y lee solo las tablas de datos/.
 Las instrucciones dentro de comentarios HTML no aparecen en el dashboard.
 -->
 
-# Resumen ejecutivo
+# Resumen
 
 ## Row {data-height=170}
 
