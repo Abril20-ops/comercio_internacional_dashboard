@@ -2,13 +2,13 @@
 title: "Análisis Exploratorio de Datos (EDA) y Preparación K-Means"
 author: "Análisis Comercial UN Comtrade"
 output:
-  pdf_document:
-    toc: true
   html_document:
     toc: true
     toc_float: true
     theme: flatly
     highlight: tango
+  pdf_document:
+    toc: true
 ---
 
 ## Contexto y Alcance de los Datos
@@ -230,17 +230,17 @@ PrimaryValue contiene el valor en USD corrientes, mientras que val_musd expresa 
 | Variable | Tipo | Descripción | Uso en el análisis |
 |:--|:--|:--|:--|
 | `period` | Texto | Año de referencia, por ejemplo `"2015"`. | Identificar el periodo original. |
-| `reporterCode` | Entero | Código M49 del país que reporta; `484` corresponde a México. | Verificar el alcance geográfico. |
-| `partnerCode` | Entero | Código M49 del país socio. | Identificar proveedores y destinos; |
+| `reporterCode` | Entero | Código M49 del país que reporta, `484` corresponde a México. | Verificar el alcance geográfico. |
+| `partnerCode` | Entero | Código M49 del país socio. | Identificar proveedores y destinos, |
 | `partnerDesc` | Texto | Nombre del país socio. | Etiquetas en tablas y gráficas. |
 | `cmdCode` | Texto | Código del capítulo HS de dos dígitos, por ejemplo `"01"`. | Identificar el capítulo sin perder ceros iniciales. |
 | `cmdDesc` | Texto | Descripción del capítulo HS2. | Interpretar las categorías de mercancías representadas por cada capítulo. |
 | `primaryValue` | Numérico | Valor comercial registrado en USD corrientes. | Calcular totales, participaciones e índices de concentración. |
-| `fobvalue` | Numérico | Valor FOB en USD, cuando está disponible. | Revisar la información de valoración; no se suma a `primaryValue`. |
+| `fobvalue` | Numérico | Valor FOB en USD, cuando está disponible. | Revisar la información de valoración, no se suma a `primaryValue`. |
 | `flow_code` | Texto | Dirección del flujo: `M` para importación y `X` para exportación. | Separar los dos tipos de comercio. |
 | `flow_desc` | Texto | Descripción del flujo: `Import` o `Export`. | Etiquetas legibles en tablas y gráficas. |
 | `año` | Entero | Año numérico obtenido de `period`. | Construir series y comparaciones anuales. |
-| `hs2` | Texto | Código HS2 derivado de `cmdCode`; en esta extracción coinciden. | Agrupar el comercio por capítulo y definir la unidad de análisis del modelo K-Means. |
+| `hs2` | Texto | Código HS2 derivado de `cmdCode`, en esta extracción coinciden. | Agrupar el comercio por capítulo y definir la unidad de análisis del modelo K-Means. |
 | `val_musd` | Numérico | `primaryValue / 1,000,000`, en millones de USD. | Presentar valores en una escala legible. |
 
 **Unidad de observación:** año × flujo × país socio × capítulo HS2. La combinación `año + flow_code + partnerCode + hs2` debe revisarse para detectar duplicados.
@@ -699,7 +699,7 @@ El análisis muestra diferencias entre la estructura  de las importaciones y exp
 
 Por ello, el siguiente paso consiste en medir la concentración de socios dentro de cada capítulo HS2 y para cada año, con especial atención a las importaciones, que constituyen el foco principal del análisis.
 
-Para cada año, flujo y capítulo, la participación del socio es $p_i = valor_i / \sum_j valor_j$. El índice de Herfindahl–Hirschman es $HHI = \sum_i p_i^2$. Cercano a 1 implica mayor concentración de **valor**; el número efectivo de socios es $1/HHI$. `top1` mide la cuota del socio principal. Los socios sin valor positivo observado no se imputan como cero.Adicionalmente, se calcula participacion, que representa el peso de cada capítulo HS2 dentro del valor total del flujo comercial correspondiente a cada año
+Para cada año, flujo y capítulo, la participación del socio es $p_i = valor_i / \sum_j valor_j$. El índice de Herfindahl–Hirschman es $HHI = \sum_i p_i^2$. Cercano a 1 implica mayor concentración de **valor**, el número efectivo de socios es $1/HHI$. `top1` mide la cuota del socio principal. Los socios sin valor positivo observado no se imputan como cero.Adicionalmente, se calcula participacion, que representa el peso de cada capítulo HS2 dentro del valor total del flujo comercial correspondiente a cada año
 
 
 
@@ -709,7 +709,7 @@ El análisis muestra diferencias entre la estructura  de las importaciones . Sin
 
 Por ello, el siguiente paso consiste en medir la concentración de socios dentro de cada capítulo HS2 y para cada año, con especial atención a las importaciones, que constituyen el foco principal del análisis.
 
-Para cada año, flujo y capítulo, la participación del socio es $p_i = valor_i / \sum_j valor_j$. El índice de Herfindahl–Hirschman es $HHI = \sum_i p_i^2$. Cercano a 1 implica mayor concentración de **valor**; el número efectivo de socios es $1/HHI$. `top1` mide la cuota del socio principal. Los socios sin valor positivo observado no se imputan como cero.Adicionalmente, se calcula participacion, que representa el peso de cada capítulo HS2 dentro del valor total del flujo comercial correspondiente a cada año
+Para cada año, flujo y capítulo, la participación del socio es $p_i = valor_i / \sum_j valor_j$. El índice de Herfindahl–Hirschman es $HHI = \sum_i p_i^2$. Cercano a 1 implica mayor concentración de **valor**, el número efectivo de socios es $1/HHI$. `top1` mide la cuota del socio principal. Los socios sin valor positivo observado no se imputan como cero.Adicionalmente, se calcula participacion, que representa el peso de cada capítulo HS2 dentro del valor total del flujo comercial correspondiente a cada año
 
 
 
@@ -797,7 +797,7 @@ knitr::kable(
 - **Plumas y artículos relacionados (HS2 `67`) tienen el HHI más alto**, pero su valor importado fue mucho menor (**92.9 millones de USD**). Por ello, la concentración debe interpretarse junto con la importancia económica del capítulo.
 - **Contar países no basta para medir diversificación:** en preparaciones alimenticias diversas (HS2 `21`) aparecen **50 socios**, pero USA concentra **74.8%** del valor.
 
-Entre los capítulos mostrados, `27` y `10` destacan por combinar valores importados elevados con una fuerte concentración en un socio. Estos resultados describen el **valor comercial registrado en 2025**; por sí solos no miden cantidades físicas ni riesgo de desabasto.
+Entre los capítulos mostrados, `27` y `10` destacan por combinar valores importados elevados con una fuerte concentración en un socio. Estos resultados describen el **valor comercial registrado en 2025**, por sí solos no miden cantidades físicas ni riesgo de desabasto.
 
 
 ```{r indicadores 2015}
@@ -956,8 +956,6 @@ Entre los capítulos que más redujeron su concentración entre 2015 y 2025 se o
 
 Por ejemplo, en tejidos textiles impregnados o recubiertos (HS59) Estados Unidos continuó siendo el principal proveedor, pero su participación cayó de 76.6% a 48.5%, mientras que el HHI disminuyó de 0.595 a 0.274.
 
-
-
 En conjunto, el análisis muestra que la concentración de proveedores no evolucionó de manera uniforme entre los distintos capítulos HS2. Algunos capítulos aumentaron claramente su dependencia de pocos proveedores. En otros casos ocurrió el proceso contrario: el HHI disminuyó y la participación del proveedor principal se redujo, reflejando una distribución más equilibrada del valor entre distintos socios.
 
 Por lo tanto, para evaluar la estructura de proveedores no basta con identificar al socio principal o contar el número de países participantes. Es necesario considerar conjuntamente el HHI, la participación del proveedor dominante y los cambios de estas medidas a lo largo del tiempo.
@@ -1027,6 +1025,7 @@ knitr::kable(
   caption = "Principales capítulos HS2 importados por México desde Estados Unidos, 2015–2025"
 )
 ```
+
 Notamos que con USA las categorías que se tienen en común tanto de exportación como de importación son Vehículos, maquinaria eléctrica y categoría 84 correspondiente a reactores nucleares, bolers, maquinaria y partes para estos.
 
 *Exportaciones*
@@ -1199,7 +1198,7 @@ Analizar cada capítulo de manera individual permite identificar casos particula
 
 **Hipótesis descriptiva:** la concentración no cambia de la misma manera en todos los capítulos, algunos de alto valor se concentran más y otros se diversifican. Se describen asociaciones, sin atribuir los cambios a una causa concreta.
 
-La **unidad del EDA** es año × flujo × capítulo HS2 y, cuando se estudian cuotas, socio comercial. El EDA conserva las etiquetas originales; el modelo utiliza únicamente el valor asignado a socios geográficos identificados. La **unidad de K-means** será el capítulo HS2: cada capítulo tendrá indicadores resumidos de concentración, cambio y participación importadora. No existe una etiqueta futura a predecir; el HHI es el indicador principal que queremos comprender y los grupos son perfiles descriptivos. Las exportaciones se conservan como contexto de la relación comercial de México, mientras que el modelo se enfoca en proveedores de importaciones.
+La **unidad del EDA** es año × flujo × capítulo HS2 y, cuando se estudian cuotas, socio comercial. El EDA conserva las etiquetas originales, el modelo utiliza únicamente el valor asignado a socios geográficos identificados. La **unidad de K-means** será el capítulo HS2: cada capítulo tendrá indicadores resumidos de concentración, cambio y participación importadora. No existe una etiqueta futura a predecir, el HHI es el indicador principal que queremos comprender y los grupos son perfiles descriptivos. Las exportaciones se conservan como contexto de la relación comercial de México, mientras que el modelo se enfoca en proveedores de importaciones.
 
 ### 1. Cobertura y calidad antes de comparar años
 
@@ -1275,7 +1274,7 @@ El hallazgo más interesante es que menos socios no significa necesariamente men
 * HS97 en importaciones es una excepción dentro de la selección: bajaron tanto los socios (38 a 14) como el valor (33.3 a 21.7 millones).
 
 
-El gráfico que teníamos anteriormente apila importaciones y exportaciones; esa suma representa el valor de **ambos flujos**, no el saldo comercial. El saldo anual se obtiene restando importaciones a exportaciones:
+El gráfico que teníamos anteriormente apila importaciones y exportaciones, esa suma representa el valor de **ambos flujos**, no el saldo comercial. El saldo anual se obtiene restando importaciones a exportaciones:
 
 ```{r saldo-adicional, echo=TRUE, fig.width=9, fig.height=4}
 saldo_anual <- cobertura_adicional %>%
@@ -1700,7 +1699,7 @@ cat("Capítulos incluidos en el modelo:", nrow(datos_modelo), "\n")
 | Paso | Qué hicimos | Para qué sirve |
 |---|---|---|
 | **1. Obtención** | Descargamos de UN Comtrade el comercio anual reportado por México entre **2015 y 2025**, con importaciones y exportaciones por socio y capítulo HS2. Guardamos una copia local para reproducir el análisis sin descargarla cada vez. | Definir una fuente y un periodo consistentes. |
-| **2. Limpieza** | Conservamos registros con valor positivo, códigos HS2 de dos dígitos y socios distintos del total mundial; evitamos sumar desgloses secundarios. | No duplicar valores ni mezclar niveles de detalle. Cada fila representa un **agregado anual**, no una transacción individual. |
+| **2. Limpieza** | Conservamos registros con valor positivo, códigos HS2 de dos dígitos y socios distintos del total mundial, evitamos sumar desgloses secundarios. | No duplicar valores ni mezclar niveles de detalle. Cada fila representa un **agregado anual**, no una transacción individual. |
 | **3. Revisión de cobertura** | Comprobamos años, flujos, registros y capítulos. Los **97 capítulos candidatos** aparecen durante los 11 años. | Saber si es razonable comparar capítulos a través del tiempo. |
 | **4. Exploración** | Analizamos valores comerciales, saldo, capítulos de mayor peso y socios principales. | Entender qué capítulos importan económicamente antes de agruparlos. |
 | **5. Indicadores** | Calculamos por año y capítulo el **HHI**, la cuota del socio principal (`top1`) y la participación del capítulo en las importaciones. | Medir dos cosas distintas: **concentración dentro del capítulo** e **importancia del capítulo en el total**. |
@@ -1708,7 +1707,7 @@ cat("Capítulos incluidos en el modelo:", nrow(datos_modelo), "\n")
 | **7. Perfil para el modelo** | Construimos **una fila por capítulo importador**, usando solo el valor asignado a socios identificados. Comparamos promedios de **2015–2017** con **2023–2025** y conservamos una medida de cobertura del valor. | Dar a K-means unidades comparables y documentar qué parte de los datos representa cada indicador. |
 | **8. Matriz numérica** | Excluimos HS99 del agrupamiento por ser mercancías no especificadas. Elegimos cuatro características, transformamos el peso con `log1p()` y estandarizamos las columnas. | Preparar las distancias que utilizará K-means sin que una variable domine solo por su escala. |
 
-¿Qué buscamos con K-means? Identificar grupos de capítulos con perfiles parecidos. Por ejemplo, podríamos encontrar capítulos de mucho valor y concentración creciente, u otros de mucho valor cuya concentración disminuyó. Los grupos permitirán resumir y comunicar los patrones del EDA; no son un pronóstico ni explican por sí solos la causa de los cambios. 
+¿Qué buscamos con K-means? Identificar grupos de capítulos con perfiles parecidos. Por ejemplo, podríamos encontrar capítulos de mucho valor y concentración creciente, u otros de mucho valor cuya concentración disminuyó. Los grupos permitirán resumir y comunicar los patrones del EDA, no son un pronóstico ni explican por sí solos la causa de los cambios. 
 
 Antes de ajustar los modelos K-Means, verificamos dos propiedades estadísticas de las cuatro variables seleccionadas (`hhi_medio`, `cambio_hhi`, `peso_log` y `cambio_peso_pp`):
 1. **Asimetría y curtosis (`e1071`):** Comprobamos cómo la transformación `peso_log = log1p(100 * participacion_media)` corrige el sesgo extremo de la participación original.
