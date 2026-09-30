@@ -1,0 +1,599 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+  spanish,
+  10pt,
+]{article}
+\usepackage{xcolor}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{5}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{longtable,booktabs,array}
+\newcounter{none} % for unnumbered tables
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\usepackage{graphicx}
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+\ifLuaTeX
+\usepackage[bidi=basic,shorthands=off]{babel}
+\else
+\usepackage[bidi=default,shorthands=off]{babel}
+\fi
+\ifLuaTeX
+  \usepackage{selnolig} % disable illegal ligatures
+\fi
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{float}
+\usepackage{microtype}
+\usepackage{fvextra}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+\setlength{\emergencystretch}{3em}
+\renewcommand{\arraystretch}{1.15}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+% fallback for those not using the hyperref driver hyperxmp:
+\makeatletter
+\@ifundefined{xmpquote}{\newcommand{\xmpquote}[1]{#1}}{}
+\makeatother
+\hypersetup{
+  pdflang={es},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\author{}
+\date{\vspace{-2.5em}29/09/2026}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+
+\vspace*{2cm}
+
+{\LARGE\bfseries Análisis comercial de México\par}
+
+\vspace{0.7cm}
+
+{\large Importaciones, exportaciones y concentración de proveedores, 2015--2025\par}
+
+\vspace{1.5cm}
+
+{\Large Equipo 11\par}
+
+\vspace{0.8cm}
+
+{\large\bfseries Integrantes\par}
+
+\vspace{0.4cm}
+
+Perales Tapia Abril\par
+Sosa Ildefonso Angel David\par
+Rojas Arteaga Citlalli\par
+Zuñiga Burrusqueta Angel\par
+Garcia Rodriguez Antonio\par
+
+\vspace{1cm}
+
+{\large\bfseries Profesora\par}
+Claudia Juárez\par
+
+\vfill
+
+Fecha de entrega: 30 de septiembre de 2026\par
+
+\end{titlepage}
+
+\tableofcontents
+\clearpage
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\section{Introducción}\label{introducciuxf3n}
+
+Este proyecto examina la estructura del comercio de bienes reportado por
+México entre 2015 y 2025. Las exportaciones proporcionan contexto, el
+foco analítico son las importaciones, su importancia económica por
+capítulo HS2, la cual es una categoría amplia de mercancías identificada
+por los primeros dos dígitos del Sistema Armonizado (HS), que se utiliza
+para clasificar productos en el comercio internacional, además de
+analizar la concentración del valor entre proveedores.
+
+La base preparada contiene \textbf{93,942 registros}. Se calculan
+participaciones, HHI y cambios entre promedios de 2015--2017 y
+2023--2025. El índice de Herfindahl--Hirschman (HHI) mide qué tan
+concentrado está el valor de las importaciones entre los países
+proveedores. En nuestro proyecto se calcula para cada año y capítulo
+HS2.
+
+Primero se obtiene la participación de cada proveedor:
+
+\[
+p_i = \frac{V_i}{\sum_{j=1}^{n} V_j}
+\]
+
+donde \(V_i\) es el valor importado desde el proveedor \(i\) y \(n\) es
+el número de proveedores con valor positivo observado. Después, se suman
+los cuadrados de sus participaciones:
+
+\[
+HHI = \sum_{i=1}^{n} p_i^2
+\]
+
+El índice se expresa aquí en una escala de 0 a 1. Un valor cercano a 1
+indica mayor concentración; un valor menor indica una distribución más
+equilibrada del valor entre proveedores.
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}lr@{}}
+\toprule\noalign{}
+Distribución del valor importado & HHI \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Un proveedor concentra el 100\% & 1.00 \\
+Dos proveedores tienen 50\% cada uno & 0.50 \\
+Cuatro proveedores tienen 25\% cada uno & 0.25 \\
+\end{longtable}
+}
+
+En el análisis temporal se utiliza:
+
+\[
+\Delta HHI =
+\overline{HHI}_{2023–2025} -
+\overline{HHI}_{2015–2017}
+\]
+
+Un cambio positivo indica un aumento de la concentración y uno negativo
+señala una reducción. El HHI no puede ser negativo; su cambio sí puede
+serlo.
+
+\textbf{Alcance de la interpretación:} el HHI mide concentración del
+valor comercial, no cantidades físicas, facilidad de sustituir
+proveedores ni riesgo directo de desabasto. Su cálculo depende del
+universo de socios incluido y debe interpretarse junto con la
+importancia económica del capítulo.
+
+El agrupamiento utiliza \textbf{96 capítulos} y cuatro características
+estandarizadas.
+
+La mejor silhouette entre las alternativas evaluadas corresponde a
+\textbf{K=4 (0.412)}. Se presenta también una partición de cuatro grupos
+como herramienta de comunicación, cuya silhouette es \textbf{0.412}.
+Esta elección prioriza el detalle descriptivo y no se presenta como
+óptimo estadístico.
+
+Los resultados permiten distinguir perfiles de peso económico y
+concentración. Estos perfiles ayudan a seleccionar capítulos para un
+análisis más detallado; no constituyen una medida directa de riesgo de
+desabasto ni una explicación causal.
+
+\section{Planteación del problema, pregunta y
+alcance}\label{planteaciuxf3n-del-problema-pregunta-y-alcance}
+
+Una elevada concentración comercial puede coexistir con un valor
+importado pequeño. Por ello, estudiar proveedores sin considerar el peso
+económico de cada capítulo puede dar una imagen incompleta de la
+estructura importadora mexicana.
+
+\textbf{Pregunta principal:} ¿Es posible identificar grupos de capítulos
+HS2 con perfiles similares de importancia económica y concentración de
+proveedores, considerando sus niveles y los cambios entre el inicio y el
+final del periodo?
+
+\textbf{Hipótesis descriptiva:} los capítulos presentan cambios
+heterogéneos en concentración y participación. La evidencia se examina
+descriptivamente; no se realiza una prueba causal ni una prueba formal
+de hipótesis.
+
+La población de interés es el comercio de mercancías reportado por
+México en UN Comtrade durante 2015--2025. La unidad de observación es
+año × flujo × socio × capítulo HS2. La unidad del agrupamiento es el
+capítulo importador con cobertura completa. El universo está
+condicionado a los registros y criterios de cobertura disponibles; no es
+una muestra aleatoria de empresas o transacciones.
+
+No existe una respuesta futura supervisada. Las características para
+nuestro modelo son HHI, cambio del HHI, participación media transformada
+y cambio de participación en puntos porcentuales. La salida es una
+asignación a grupos descriptivos.
+
+\section{Exploración de los datos y decisiones de preparación para el
+modelo de
+K-Means}\label{exploraciuxf3n-de-los-datos-y-decisiones-de-preparaciuxf3n-para-el-modelo-de-k-means}
+
+\subsection{Procedencia y cobertura}\label{procedencia-y-cobertura}
+
+La fuente es \textbf{UN Comtrade}, de la División de Estadística de las
+Naciones Unidas, consultada mediante el paquete \texttt{comtradr}. Se
+utiliza una copia local de la extracción anual de México, con
+importaciones y exportaciones por socio y capítulo HS2.
+
+\textbf{Alcance de los datos: } El periodo extraído (2015--2025) permite
+comparar once años e incluir etapas anteriores y posteriores a 2020, sin
+atribuir automáticamente los cambios a ese acontecimiento. HS2 facilita
+comunicar categorías amplias, a costa de ocultar diferencias internas.
+
+\subsection{Calidad y limpieza}\label{calidad-y-limpieza}
+
+\begin{table}
+
+\caption{\label{tab:tabla-calidad}Controles de integridad previos a las agregaciones}
+\centering
+\begin{tabular}[t]{lr}
+\toprule
+Control & Resultado\\
+\midrule
+Registros de origen & 93942\\
+Duplicados exactos retirados & 0\\
+Valor monetario faltante en origen & 0\\
+Valor monetario no positivo en origen & 0\\
+Registros conservados & 93942\\
+\addlinespace
+Llaves repetidas después del filtro & 0\\
+Segundo socio sin información (antes del filtro) & 93942\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Se conservaron solo \textbf{93,942 registros}. Seleccionamos datos
+reportados a México, incluido a sus socios, flujos reconocidos, códigos
+HS2 válidos y valores monetarios finitos positivos. Los totales
+mundiales se excluyen para no sumarlos junto con sus componentes. Se
+conservan los agregados de aduana y transporte y se excluyen códigos de
+segundo socio conocidos distintos de cero.
+
+Los registros ausentes no se imputan como comercio cero. Los valores
+altos no se eliminan automáticamente: capítulos de gran tamaño pueden
+representar una estructura económica legítima. La participación se
+transforma con \texttt{log1p(100\ ×\ participación)} y las cuatro
+características se estandarizan. Esto reduce la influencia de magnitudes
+extremas, sin imponer normalidad a K-Means.
+
+\subsection{Decisiones para el modelo}\label{decisiones-para-el-modelo}
+
+Para nuestro EDA se conserva las etiquetas originales. Para el modelo se
+excluyen categorías regionales no específicas, confidenciales y
+entidades especiales presentes en la extracción. \textbf{El código 490
+se conserva:} UN Comtrade lo utiliza para Taiwán bajo la etiqueta
+\emph{Other Asia, nes}.
+
+La participación del modelo usa como denominador el valor importado de
+los socios conservados de cada año, incluyendo los capítulos disponibles
+antes de excluir HS99 de las filas del agrupamiento. No debe confundirse
+con la participación sobre todo el comercio reportado.
+
+En 2025, los socios conservados representan \textbf{99.3\%} del valor de
+importaciones disponible. El anexo contrasta los indicadores originales
+y los usados en el modelo.
+
+\section{Análisis exploratorio}\label{anuxe1lisis-exploratorio}
+
+\subsection{Evolución de los flujos}\label{evoluciuxf3n-de-los-flujos}
+
+\begin{figure}
+\includegraphics[width=1\linewidth]{Reporte_Comercio_Mexico_files/figure-latex/evolucion-flujos-1} \caption{Valor anual de los capítulos incluidos. USD corrientes.}\label{fig:evolucion-flujos}
+\end{figure}
+
+Entre 2015 y 2025, el valor nominal importado cambia \textbf{67.9\%} y
+el exportado \textbf{75.0\%}. Son variaciones monetarias, no crecimiento
+de cantidades físicas. El saldo de los capítulos incluidos en 2025 es
+\textbf{2.3 miles de millones de USD}, calculado como exportaciones
+menos importaciones.
+
+\subsection{Principales socios}\label{principales-socios}
+
+\begin{table}
+
+\caption{\label{tab:socios-principales}Cinco principales socios por valor acumulado, 2015–2025}
+\centering
+\begin{tabular}[t]{llrr}
+\toprule
+Flujo & Socio & Valor (mil M USD) & Cuota (\%)\\
+\midrule
+Importación & USA & 2415.5 & 43.7\\
+Importación & China & 1050.8 & 19.0\\
+Importación & Rep. of Korea & 200.0 & 3.6\\
+Importación & Japan & 197.2 & 3.6\\
+Importación & Germany & 191.4 & 3.5\\
+\addlinespace
+Exportación & USA & 4349.9 & 79.8\\
+Exportación & Canada & 158.3 & 2.9\\
+Exportación & China & 87.1 & 1.6\\
+Exportación & Germany & 74.7 & 1.4\\
+Exportación & North America and Central America, nes & 61.7 & 1.1\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Las cuotas son proporciones del valor acumulado de cada flujo. Un
+ranking acumulado resume importancia económica, pero no demuestra que
+las posiciones hayan permanecido iguales cada año. Las categorías
+especiales se muestran con su etiqueta original y no se interpretan
+automáticamente como países.
+
+\subsubsection{Participación anual de los socios
+dominantes}\label{participaciuxf3n-anual-de-los-socios-dominantes}
+
+El ranking acumulado se complementa con la cuota del socio principal y
+de los tres principales socios de cada año. Así se distingue la
+importancia histórica de los socios de su concentración anual en cada
+flujo.
+
+\begin{figure}
+\includegraphics[width=1\linewidth]{Reporte_Comercio_Mexico_files/figure-latex/complemento-cuotas-socios-1} \caption{Cuotas anuales Top 1 y Top 3 del valor total de cada flujo, conservando las etiquetas originales.}\label{fig:complemento-cuotas-socios}
+\end{figure}
+
+Una cuota Top 1 elevada indica que un solo socio domina el flujo
+agregado; la diferencia con Top 3 muestra cuánto aportan los dos
+siguientes. Los integrantes de estos rankings pueden cambiar entre años.
+Estas medidas agregadas no sustituyen al HHI por capítulo: una
+estructura aparentemente diversificada en el total puede ocultar
+productos muy concentrados.
+
+\subsection{Concentración e importancia
+económica}\label{concentraciuxf3n-e-importancia-econuxf3mica}
+
+Para cada año y capítulo se calcula la cuota del socio como su valor
+dividido entre el total del capítulo. El HHI es la suma de las cuotas al
+cuadrado: valores cercanos a uno indican mayor concentración. El
+indicador es positivo; \textbf{lo que puede ser negativo es su cambio}.
+El número efectivo de socios es su inverso, mientras que \texttt{top1}
+es la cuota del proveedor principal.
+
+\begin{figure}
+\includegraphics[width=1\linewidth]{Reporte_Comercio_Mexico_files/figure-latex/trayectoria-hhi-1} \caption{Promedio del HHI importador por capítulo, ponderado por valor anual de los socios conservados.}\label{fig:trayectoria-hhi}
+\end{figure}
+
+El HHI ponderado pasa de \textbf{0.327} en 2015 a \textbf{0.274} en
+2025. Este promedio combina cambios de concentración y cambios de peso
+de los capítulos.
+
+\begin{figure}
+\includegraphics[width=1\linewidth]{Reporte_Comercio_Mexico_files/figure-latex/peso-y-concentracion-1} \caption{Cada punto es un capítulo importador con cobertura completa; se etiquetan los ocho de mayor participación media.}\label{fig:peso-y-concentracion}
+\end{figure}
+
+Los capítulos de gran peso y los más concentrados no son necesariamente
+los mismos. El gráfico permite distinguir ambas dimensiones; no mide la
+facilidad de sustituir proveedores. Entre los capítulos del modelo,
+\textbf{61} reducen su HHI y \textbf{35} lo aumentan entre las ventanas
+comparadas.
+
+\section{Metodología y
+agrupamiento}\label{metodologuxeda-y-agrupamiento}
+
+K-Means agrupa capítulos según distancia euclidiana entre cuatro
+características estandarizadas. El HHI y la participación son promedios
+anuales; los cambios son diferencias entre promedios de 2015--2017 y
+2023--2025, para reducir la dependencia de un único año. HS99 se excluye
+de las filas del modelo por reunir mercancías no especificadas.
+
+Se evalúan K=2 a K=8, con semilla fija y 100 inicializaciones. La WSS
+mide dispersión interna y disminuye al aumentar K; la silhouette evalúa
+separación relativa. K-Means no exige normalidad, pero puede ser
+sensible a extremos, formas no esféricas y características
+correlacionadas.
+
+\begin{table}
+
+\caption{\label{tab:evaluacion-k}Comparación de alternativas de agrupamiento}
+\centering
+\begin{tabular}[t]{rrr}
+\toprule
+K & WSS & Silhouette\\
+\midrule
+2 & 303.995 & 0.285\\
+3 & 235.327 & 0.375\\
+4 & 169.809 & 0.412\\
+5 & 120.815 & 0.346\\
+6 & 103.310 & 0.304\\
+\addlinespace
+7 & 93.266 & 0.305\\
+8 & 83.699 & 0.306\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La mayor silhouette corresponde a K=4. Para comunicar perfiles más
+detallados se examina K=4, sin afirmar que maximice la separación. K=5
+obtiene una silhouette de 0.346 y debe considerarse como alternativa;
+cuatro grupos se presentan como una partición descriptiva manejable, no
+como el único número defendible. La WSS por sí sola no demuestra un codo
+inequívoco.
+
+No se divide entrenamiento y prueba porque el objetivo es describir los
+capítulos observados, no predecir una etiqueta futura. La evaluación
+combina métricas internas, interpretación de perfiles y estabilidad
+frente a inicializaciones. Esto no reemplaza una validación temporal o
+externa.
+
+La comparación con 20 semillas alternativas obtiene ARI medio
+\textbf{0.941} y mínimo \textbf{0.609}. ARI=1 indica asignaciones
+equivalentes aunque cambien los números de grupo. Esta prueba evalúa
+inicialización, no robustez a nuevas observaciones o ventanas
+temporales.
+
+\subsection{Resultado final: Perfiles de cuatro
+grupos}\label{resultado-final-perfiles-de-cuatro-grupos}
+
+\begin{table}
+
+\caption{\label{tab:perfiles-k4}Promedios por capítulo y grupo; el peso no es la cuota conjunta del grupo}
+\centering
+\begin{tabular}[t]{lrrrrr}
+\toprule
+Grupo & Capítulos & HHI & Δ HHI & Peso (\%) & Δ peso (pp)\\
+\midrule
+1 & 15 & 0.581 & 0.189 & 0.177 & 0.023\\
+2 & 3 & 0.217 & -0.051 & 9.724 & 0.762\\
+3 & 72 & 0.350 & -0.053 & 0.316 & -0.007\\
+4 & 6 & 0.384 & 0.002 & 6.917 & -0.567\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Los números de cluster son identificadores arbitrarios. Sus diferencias
+se interpretan con la tabla en unidades originales, sin asumir que todos
+los capítulos de un grupo comparten el mismo signo de cambio. Un HHI
+elevado puede coexistir con una reducción de concentración.
+
+\begin{itemize}
+\item
+  \textbf{Grupo 1:} 15 capítulos; participación media por capítulo de
+  0.18\% y HHI medio de 0.581. Presenta aumento promedio del HHI (0.189)
+  y cambio de peso de 0.023 puntos porcentuales.
+\item
+  \textbf{Grupo 2:} 3 capítulos; participación media por capítulo de
+  9.72\% y HHI medio de 0.217. Presenta reducción promedio del HHI
+  (-0.051) y cambio de peso de 0.762 puntos porcentuales.
+\item
+  \textbf{Grupo 3:} 72 capítulos; participación media por capítulo de
+  0.32\% y HHI medio de 0.350. Presenta reducción promedio del HHI
+  (-0.053) y cambio de peso de -0.007 puntos porcentuales.
+\item
+  \textbf{Grupo 4:} 6 capítulos; participación media por capítulo de
+  6.92\% y HHI medio de 0.384. Presenta aumento promedio del HHI (0.002)
+  y cambio de peso de -0.567 puntos porcentuales.
+\end{itemize}
+
+\begin{figure}
+\includegraphics[width=1\linewidth]{Reporte_Comercio_Mexico_files/figure-latex/clusters-nivel-1} \caption{K=4: peso y nivel de concentración. El tamaño indica la magnitud del cambio, sin distinguir su signo.}\label{fig:clusters-nivel}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=1\linewidth]{Reporte_Comercio_Mexico_files/figure-latex/clusters-cambio-1} \caption{K=4: dirección del cambio del HHI. Arriba de cero aumenta la concentración; abajo disminuye.}\label{fig:clusters-cambio}
+\end{figure}
+
+La segunda visualización complementa la primera: diferencia aumento y
+reducción del HHI entre las ventanas comparadas. La separación del
+modelo usa cuatro variables, una proyección de dos dimensiones puede
+mostrar superposición aun cuando el algoritmo distinga los capítulos en
+el espacio completo.
+
+\section{Conclusiones}\label{conclusiones}
+
+La evidencia responde a las preguntas iniciales en los siguientes
+términos:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \textbf{Evolución comercial y socios:} las series describen la
+  trayectoria nominal de importaciones y exportaciones, y el ranking
+  identifica sus principales socios por valor acumulado. El saldo se
+  calcula por diferencia, no por suma de flujos.
+\item
+  \textbf{Concentración:} los capítulos presentan cambios heterogéneos.
+  El promedio ponderado y la comparación de ventanas sintetizan
+  comportamientos distintos; no permiten atribuir causas ni equiparar
+  concentración con desabasto.
+\item
+  \textbf{Importancia económica:} 35 capítulos del modelo ganan
+  participación y 61 la pierden. Son cambios relativos sobre el valor de
+  socios conservados, no necesariamente aumentos o caídas del valor
+  absoluto.
+\item
+  \textbf{Agrupamiento:} es posible construir perfiles exploratorios que
+  combinan nivel y cambio de concentración y peso económico. K=4 ofrece
+  detalle comunicable, con silhouette de 0.412. La mejor separación
+  interna corresponde a K=4; por ello, los cuatro grupos no se presentan
+  como clasificación definitiva.
+\end{enumerate}
+
+Los resultados son compatibles con la hipótesis descriptiva. La utilidad
+práctica consiste en seleccionar capítulos para profundizar su
+estructura de abastecimiento, considerando conjuntamente concentración y
+relevancia económica. Se requiere análisis de productos y sustitución
+antes de formular recomendaciones operativas.
+
+\section{Anexo}\label{anexo}
+
+\subsection{Diccionario del modelo}\label{diccionario-del-modelo}
+
+{\def\LTcaptype{none} % do not increment counter
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3333}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 4\tabcolsep) * \real{0.3333}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Característica
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Definición
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Unidad
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+HHI medio & Promedio anual de la suma de cuotas al cuadrado & Índice
+entre 0 y 1 \\
+Cambio HHI & HHI medio final menos inicial & Puntos del índice \\
+Peso transformado & log1p de la participación media en porcentaje &
+Transformación logarítmica \\
+Cambio de peso & Participación media final menos inicial & Puntos
+porcentuales \\
+\end{longtable}
+}
+
+\end{document}
