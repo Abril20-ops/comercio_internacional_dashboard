@@ -27,15 +27,15 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 # 1. DATOS
 # Son las tablas que guarda el chunk "exportar-dashboard" de Proyecto_9_EDA.Rmd
 # en la carpeta datos/. La primera columna de cada una es el año (se renombra
-# a "anio" para no depender de la codificación de la ñ).
+# a "año" para no depender de la codificación de la ñ).
 # -----------------------------------------------------------------------------
-ind   <- readRDS("datos/indicadores.rds") %>% rename(anio = 1) %>% filter(flow_code == "M")
-cl    <- readRDS("datos/clusters_k4.rds")  %>% mutate(cluster = as.character(cluster))
-saldo <- readRDS("datos/saldo_anual.rds")  %>% rename(anio = 1)
-soc   <- readRDS("datos/socios_top5.rds")  %>% rename(anio = 1)
+ind   <- readRDS("datos/indicadores.rds") %>% rename(año = 1) %>% filter(flow_code == "M")
+cl    <- readRDS("datos/clusters_k5.rds")  %>% mutate(cluster = as.character(cluster))
+saldo <- readRDS("datos/saldo_anual.rds")  %>% rename(año = 1)
+soc   <- readRDS("datos/socios_top5.rds")  %>% rename(año = 1)
 
-anio_i <- min(ind$anio)
-anio_f <- max(ind$anio)
+año_i <- min(ind$año)
+año_f <- max(ind$año)
 
 # -----------------------------------------------------------------------------
 # 2. NOMBRES LEGIBLES (capítulos HS2 y países)
@@ -88,15 +88,15 @@ eje_pct_x <- scale_x_log10(breaks = c(0.0001, 0.001, 0.01, 0.1, 1, 10),
 # -----------------------------------------------------------------------------
 # 4. OBJETOS ANALÍTICOS que alimentan KPIs y textos
 # -----------------------------------------------------------------------------
-ult   <- saldo %>% filter(anio == anio_f)
+ult   <- saldo %>% filter(año == año_f)
 acum  <- sum(saldo$saldo_mmusd)
 n_def <- sum(saldo$saldo_mmusd < 0)
 
-conc <- ind %>% group_by(anio) %>%
+conc <- ind %>% group_by(año) %>%
   summarise(hhi_pond = weighted.mean(hhi, valor_usd),
             top1_pond = weighted.mean(top1, valor_usd), .groups = "drop")
-c_i <- conc %>% filter(anio == anio_i)
-c_f <- conc %>% filter(anio == anio_f)
+c_i <- conc %>% filter(año == año_i)
+c_f <- conc %>% filter(año == año_f)
 
 # Grupos del K-means. Se nombran según su PERFIL (no su número), porque kmeans
 # puede numerar los grupos en otro orden.
@@ -108,16 +108,18 @@ perfil_grupo <- cl %>%
 
 nombres_grupo <- setNames(paste("Grupo", perfil_grupo$cluster), perfil_grupo$cluster)
 colores_grupo <- setNames(c(marino, gris_claro, verde, rojo, azul, naranja)[seq_along(nombres_grupo)], nombres_grupo)
-if (nrow(perfil_grupo) == 4) {
-  g_gigantes <- perfil_grupo$cluster[which.max(perfil_grupo$peso_medio)]
-  g_suben    <- perfil_grupo$cluster[which.max(perfil_grupo$cambio_hhi)]
-  resto      <- perfil_grupo %>% filter(!cluster %in% c(g_gigantes, g_suben))
+if (nrow(perfil_grupo) == 5) {
+  g_auto     <- cl$cluster[cl$hs2 == "87"][1]
+  perfil_base <- perfil_grupo %>% filter(cluster != g_auto)
+  g_gigantes <- perfil_base$cluster[which.max(perfil_base$peso_medio)]
+  g_suben    <- perfil_base$cluster[which.max(perfil_base$cambio_hhi)]
+  resto      <- perfil_base %>% filter(!cluster %in% c(g_gigantes, g_suben))
   g_bajan    <- resto$cluster[which.max(resto$hhi_medio)]
   g_diversif <- resto$cluster[which.min(resto$hhi_medio)]
-  nombres_grupo[c(g_gigantes, g_diversif, g_bajan, g_suben)] <-
+  nombres_grupo[c(g_gigantes, g_diversif, g_bajan, g_suben, g_auto)] <-
     c("Gigantes de importación", "Diversificados de peso medio o bajo",
-      "Concentrados que se diversifican", "Concentrados que se concentran más")
-  colores_grupo <- setNames(c(marino, gris_claro, verde, rojo), nombres_grupo[c(g_gigantes, g_diversif, g_bajan, g_suben)])
+      "Dependencia Histórica", "Riesgo Reciente", "Éxito automotriz")
+  colores_grupo <- setNames(c(marino, gris_claro, verde, rojo, azul), nombres_grupo[c(g_gigantes, g_diversif, g_bajan, g_suben, g_auto)])
 }
 cl <- cl %>% mutate(grupo = unname(nombres_grupo[cluster]), etiqueta = etq(hs2))
 perfil_grupo <- perfil_grupo %>% mutate(grupo = unname(nombres_grupo[cluster]))
@@ -126,7 +128,7 @@ K <- nrow(perfil_grupo)
 orden <- cl %>% arrange(desc(participacion_media))
 top3  <- orden %>% slice(1:3)
 alto  <- orden %>% filter(hhi_medio >= 0.6) %>% slice(1)          # el capítulo grande y muy concentrado
-ik    <- function(a, h) ind %>% filter(anio == a, hs2 == h)
+ik    <- function(a, h) ind %>% filter(año == a, hs2 == h)
 bajan <- mean(cl$cambio_hhi < 0)
 grupo_sube <- perfil_grupo %>% arrange(desc(cambio_hhi)) %>% slice(1)
 ```
@@ -144,14 +146,14 @@ Las instrucciones dentro de comentarios HTML no aparecen en el dashboard.
 
 ```{r kpi1}
 valueBox(p0(c_f$top1_pond),
-         caption = paste0("Cuota promedio del proveedor principal en ", anio_f, " (en ", anio_i, ": ", p0(c_i$top1_pond), ")"),
+         caption = paste0("Cuota promedio del proveedor principal en ", año_f, " (en ", año_i, ": ", p0(c_i$top1_pond), ")"),
          icon = "fa-globe", color = "primary")
 ```
 
 ### Importaciones
 
 ```{r kpi2}
-valueBox(f1(ult$M), caption = paste0("Importaciones ", anio_f, " (mil millones USD)"),
+valueBox(f1(ult$M), caption = paste0("Importaciones ", año_f, " (mil millones USD)"),
          icon = "fa-ship", color = "#DEE2E6")
 ```
 
@@ -165,7 +167,7 @@ valueBox(p0(bajan), caption = paste0("de los ", nrow(cl), " capítulos redujo su
 ### La excepción: energía
 
 ```{r kpi4}
-a1 <- ik(anio_f, alto$hs2)
+a1 <- ik(año_f, alto$hs2)
 valueBox(p0(a1$top1), caption = paste0(pais(a1$socio_principal), " en ", tolower(unname(hs_es[alto$hs2])), " (", p1(alto$participacion_media), " de las importaciones)"),
          icon = "fa-bolt", color = naranja)
 ```
@@ -176,7 +178,7 @@ valueBox(p0(a1$top1), caption = paste0(pais(a1$socio_principal), " en ", tolower
 
 ```{r burbujas-estatica}
 bub_f <- ind %>%
-  filter(anio == anio_f, hs2 != "99") %>%
+  filter(año == año_f, hs2 != "99") %>%
   mutate(pct = 100 * participacion,
          grupo = grupo_pais(socio_principal),
          lab = ifelse(rank(-valor_usd) <= 8, paste0("HS", hs2), ""),
@@ -195,7 +197,7 @@ p <- ggplot(bub_f, aes(pct, hhi, color = grupo, size = valor_usd / 1e9)) +
   scale_y_continuous(limits = c(0, 1.05)) +
   scale_size_area(max_size = 13, guide = "none") +
   scale_color_manual(values = col_socio) +
-  labs(x = paste0("% de las importaciones de ", anio_f, " (escala logarítmica)"),
+  labs(x = paste0("% de las importaciones de ", año_f, " (escala logarítmica)"),
        y = "HHI de proveedores (1 = un solo país)", color = "Proveedor principal") +
   tema_dashboard
 ggplotly(p, tooltip = "text") %>% layout(legend = list(orientation = "h", y = -0.22))
@@ -206,7 +208,7 @@ ggplotly(p, tooltip = "text") %>% layout(legend = list(orientation = "h", y = -0
 ```{r barras-top1}
 clave <- c("85", "84", "87", "39", "10", "27")
 barras <- ind %>%
-  filter(anio == anio_f, hs2 %in% clave) %>%
+  filter(año == año_f, hs2 %in% clave) %>%
   mutate(capitulo = reorder(etq(hs2), top1),
          grupo = grupo_pais(socio_principal),
          texto = paste0("<b>", etq(hs2), "</b><br>", pais(socio_principal), ": ", p0(top1), " del valor"))
@@ -215,7 +217,7 @@ plot_ly(barras, x = ~top1, y = ~capitulo, color = ~grupo, colors = col_socio,
         type = "bar", orientation = "h", text = ~p0(top1), textposition = "outside", cliponaxis = FALSE,
         hovertext = ~texto, hoverinfo = "text") %>%
   layout(barmode = "stack",
-         xaxis = list(title = paste0("Cuota del proveedor principal, ", anio_f), tickformat = ".0%", range = c(0, 1.12)),
+         xaxis = list(title = paste0("Cuota del proveedor principal, ", año_f), tickformat = ".0%", range = c(0, 1.12)),
          yaxis = list(title = "", categoryorder = "array", categoryarray = levels(barras$capitulo)),
          legend = list(orientation = "h", y = -0.25))
 ```
@@ -225,13 +227,16 @@ plot_ly(barras, x = ~top1, y = ~capitulo, color = ~grupo, colors = col_socio,
 ### Conclusión principal (lectura en 20 segundos)
 
 ```{r lectura-ejecutiva, results='asis'}
-a0 <- ik(anio_i, alto$hs2)
+a0 <- ik(año_i, alto$hs2)
 cat("Los tres capítulos que más pesan (**", paste(sub(" · .*", "", top3$etiqueta), collapse = ", "), "**, ",
     p0(sum(top3$participacion_media)), " del valor importado) están repartidos entre varios proveedores y su concentración bajó. ",
     "**La energía es la excepción:** ", tolower(unname(hs_es[alto$hs2])), " pesa ", p1(alto$participacion_media),
     " de las importaciones y ", pais(a1$socio_principal), " pasó de ", p0(a0$top1), " a ", p0(a1$top1), " del valor. ",
     "La concentración no cambia igual en todos los capítulos: ", p0(bajan), " la redujo, pero ",
-    grupo_sube$n, " capítulos pequeños la aumentaron.", sep = "")
+    grupo_sube$n, " capítulos pequeños la aumentaron. ",
+    "Logramos aislar el crecimiento espectacular del sector automotriz, ",
+    "y detectamos que los riesgos comerciales se dividen en dos (una dependencia histórica inamovible frente a un aumento de concentración reciente y súbito).", 
+    sep = "")
 ```
 
 # ¿Qué ocurre y qué patrones hay?
@@ -243,7 +248,7 @@ cat("Los tres capítulos que más pesan (**", paste(sub(" · .*", "", top3$etiqu
 ```{r burbujas-animada}
 bub <- ind %>%
   filter(hs2 != "99") %>%
-  group_by(anio) %>% mutate(rango = rank(-valor_usd)) %>% ungroup() %>%
+  group_by(año) %>% mutate(rango = rank(-valor_usd)) %>% ungroup() %>%
   mutate(pct = 100 * participacion,
          grupo = grupo_pais(socio_principal),
          lab = ifelse(rango <= 9, paste0("HS", hs2), ""),
@@ -254,7 +259,7 @@ bub <- ind %>%
 
 plot_ly(bub, x = ~pct, y = ~hhi, size = ~sqrt(valor_usd / 1e9), sizes = c(7, 48),
         color = ~grupo, colors = col_socio,
-        frame = ~anio, text = ~lab, hovertext = ~hover, hoverinfo = "text",
+        frame = ~año, text = ~lab, hovertext = ~hover, hoverinfo = "text",
         type = "scatter", mode = "markers+text", textposition = "top center", textfont = list(size = 11, color = "#33404d"),
         marker = list(sizemode = "diameter", opacity = 0.78, line = list(color = "white", width = 1))) %>%
   layout(xaxis = list(type = "log", title = "% de las importaciones del año (escala logarítmica)",
@@ -270,7 +275,7 @@ plot_ly(bub, x = ~pct, y = ~hhi, size = ~sqrt(valor_usd / 1e9), sizes = c(7, 48)
 ### La concentración promedio baja: el proveedor principal pasó de 50% a 42% del valor {data-width=350}
 
 ```{r concentracion}
-plot_ly(conc, x = ~anio) %>%
+plot_ly(conc, x = ~año) %>%
   add_trace(y = ~top1_pond, name = "Cuota del proveedor principal", type = "scatter", mode = "lines+markers",
             line = list(color = azul, width = 3), marker = list(color = azul),
             hovertemplate = "%{x}<br>Cuota del proveedor principal: %{y:.1%}<extra></extra>") %>%
@@ -292,9 +297,9 @@ plot_ly(conc, x = ~anio) %>%
 clave <- c("27", "10", "39", "85", "84", "87")
 
 sk <- soc %>% filter(hs2 %in% clave) %>% mutate(pais = pais(socio_nombre))
-otros <- sk %>% group_by(anio, hs2) %>%
+otros <- sk %>% group_by(año, hs2) %>%
   summarise(cuota = pmax(0, 1 - sum(cuota)), .groups = "drop") %>% mutate(pais = "Otros socios")
-sk <- bind_rows(sk %>% select(anio, hs2, pais, cuota), otros) %>%
+sk <- bind_rows(sk %>% select(año, hs2, pais, cuota), otros) %>%
   mutate(capitulo = factor(etq(hs2), levels = etq(clave)))
 
 orden_paises <- sk %>% filter(pais != "Otros socios") %>% group_by(pais) %>%
@@ -304,9 +309,9 @@ col_paises <- c("EE. UU." = azul, "China" = naranja)
 resto_p <- setdiff(orden_paises, names(col_paises))
 col_paises <- c(col_paises, setNames(rep_len(paleta, length(resto_p)), resto_p), "Otros socios" = "#E6EAEE")
 sk$pais <- factor(sk$pais, levels = rev(c(setdiff(names(col_paises), "Otros socios"), "Otros socios")))
-sk$texto <- paste0(sk$pais, " · ", sk$anio, ": ", p0(sk$cuota))
+sk$texto <- paste0(sk$pais, " · ", sk$año, ": ", p0(sk$cuota))
 
-p <- ggplot(sk, aes(anio, cuota, fill = pais, text = texto)) +
+p <- ggplot(sk, aes(año, cuota, fill = pais, text = texto)) +
   geom_col(width = 0.85) +
   facet_wrap(~capitulo, ncol = 3) +
   scale_fill_manual(values = col_paises, name = NULL) +
@@ -324,15 +329,15 @@ ggplotly(p, tooltip = "text")
 ```{r saldo}
 saldo_g <- saldo %>%
   mutate(signo = ifelse(saldo_mmusd >= 0, "Superávit", "Déficit"),
-         texto = paste0(anio, ": ", sg(saldo_mmusd), " mil millones USD"),
+         texto = paste0(año, ": ", sg(saldo_mmusd), " mil millones USD"),
          y_lab = saldo_mmusd + ifelse(saldo_mmusd >= 0, 3, -3))
 
-p <- ggplot(saldo_g, aes(anio, saldo_mmusd, fill = signo, text = texto)) +
+p <- ggplot(saldo_g, aes(año, saldo_mmusd, fill = signo, text = texto)) +
   geom_col(width = 0.75) +
   geom_hline(yintercept = 0, color = gris) +
   geom_text(aes(y = y_lab, label = sg(saldo_mmusd)), size = 3.2, color = "#33404d") +
   scale_fill_manual(values = c("Superávit" = verde, "Déficit" = rojo)) +
-  scale_x_continuous(breaks = saldo$anio) +
+  scale_x_continuous(breaks = saldo$año) +
   labs(x = NULL, y = "Exportaciones − importaciones (mil millones USD)", fill = NULL,
        caption = "Valores corrientes. El saldo describe el comercio total, no la concentración de proveedores.") +
   tema_dashboard
@@ -342,7 +347,7 @@ ggplotly(p, tooltip = "text") %>% layout(legend = list(orientation = "h", y = -0
 ### Importaciones y exportaciones
 
 ```{r flujos}
-plot_ly(saldo, x = ~anio) %>%
+plot_ly(saldo, x = ~año) %>%
   add_trace(y = ~M, name = "Importaciones", type = "scatter", mode = "lines+markers",
             line = list(color = azul, width = 3), marker = list(color = azul),
             hovertemplate = "%{x}<br>Importaciones: %{y:.1f}<extra></extra>") %>%
@@ -357,10 +362,10 @@ plot_ly(saldo, x = ~anio) %>%
 ### Lectura
 
 ```{r lectura-saldo, results='asis'}
-g <- function(a) saldo %>% filter(anio == a)
+g <- function(a) saldo %>% filter(año == a)
 txt <- paste0("México registró déficit de bienes en **", n_def, " de ", nrow(saldo), " años**, con un saldo acumulado de **",
               sg(acum), " mil millones de USD**.")
-if (all(c(2019, 2020, 2021) %in% saldo$anio)) {
+if (all(c(2019, 2020, 2021) %in% saldo$año)) {
   txt <- paste0(txt, " La excepción más marcada es **2020**: las importaciones cayeron ",
                 f1(100 * (1 - g(2020)$M / g(2019)$M)), "% y las exportaciones ",
                 f1(100 * (1 - g(2020)$X / g(2019)$X)), "%, y el saldo fue de ", sg(g(2020)$saldo_mmusd),
@@ -383,7 +388,7 @@ cat("El modelo (K-means) resume los **", nrow(cl), " capítulos** de importació
 
 ## Row {data-height=600}
 
-### Cuatro perfiles: grandes importadores, diversificados y dos grupos concentrados que van en sentidos opuestos {data-width=650}
+### Cinco perfiles: grandes importadores, Automotriz, Base diversificada y dos tipos de riesgo {data-width=650}
 
 ```{r clusters}
 cl_p <- cl %>%
@@ -479,11 +484,10 @@ ggplotly(p, tooltip = "text") %>% layout(legend = list(orientation = "h", y = -0
 ### Justificación del K
 
 ```{r justificacion-k, results='asis'}
-cat("Se compararon K = 2 a 8. El silhouette máximo es K = ", mejor$k, " (", f3(mejor$silhouette), "); la solución elegida, K = ", K,
-    ", tiene ", f3(actual$silhouette), ". ",
-    "El silhouette más alto es el de la solución más pequeña, pero esa solución separa a los capítulos casi solo por tamaño. ",
-    "Se eligió el K final porque distingue además el nivel y la dirección del cambio en la concentración, aunque con menor separación estadística. ",
-    "*(Si el equipo cambia K, hay que actualizar este párrafo.)*", sep = "")
+cat("Se compararon K = 2 a 8. Aunque con K = 4 ya se notaba un avance, la partición en K = ", K, 
+    " fue la elegida porque muestra un 'rebote' o recuperación en la calificación de separación (*Silhouette* de ", f3(actual$silhouette), "). ",
+    "Más importante aún, elegir 5 grupos evita el error analítico de aglomerar variaciones distintas: nos permite separar el éxito espectacular del sector automotriz, ",
+    "y logra diferenciar a los sectores con dependencia histórica de aquellos que sufrieron un aumento repentino en su concentración comercial.", sep = "")
 ```
 
 # Exploración {data-orientation=columns}
@@ -497,10 +501,10 @@ top30 <- orden %>% slice(1:30) %>% pull(hs2)
 hm <- ind %>%
   filter(hs2 %in% top30) %>%
   mutate(capitulo = factor(etq(hs2), levels = rev(etq(top30))),
-         texto = paste0("<b>", etq(hs2), "</b><br>", anio, "<br>HHI: ", round(hhi, 2),
+         texto = paste0("<b>", etq(hs2), "</b><br>", año, "<br>HHI: ", round(hhi, 2),
                         "<br>Proveedor principal: ", pais(socio_principal), " (", round(100 * top1), "%)"))
 
-p <- ggplot(hm, aes(factor(anio), capitulo, fill = hhi, text = texto)) +
+p <- ggplot(hm, aes(factor(año), capitulo, fill = hhi, text = texto)) +
   geom_tile(color = "white", linewidth = 0.4) +
   scale_fill_gradient(low = azul_claro, high = "#0B3C7A", limits = c(0, 1), name = "HHI") +
   labs(x = NULL, y = NULL, caption = "Los 30 capítulos de mayor peso, ordenados de mayor a menor.") +

@@ -2236,7 +2236,7 @@ Finalmente, aunque al principio parecía más fácil hacer solo 2 o 4 grupos, la
 ```{r exportar-dashboard, include=FALSE}
 dir.create("datos", showWarnings = FALSE)
 
-   saveRDS(datos_clusters4, "datos/clusters_k4.rds")
+   saveRDS(datos_clusters5, "datos/clusters_k5.rds")
    saveRDS(saldo_anual, "datos/saldo_anual.rds")
 
    socios_top5 <- por_socio %>%
