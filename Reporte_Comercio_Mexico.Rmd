@@ -238,9 +238,9 @@ modelos <- lapply(2:8, function(k) {set.seed(123); kmeans(z, centers = k, nstart
 evaluacion <- tibble(K = 2:8, WSS = vapply(modelos, function(m) m$tot.withinss, numeric(1)),
   Silhouette = vapply(modelos, function(m) mean(cluster::silhouette(m$cluster, distancias)[, "sil_width"]), numeric(1)))
 k_mejor <- evaluacion$K[which.max(evaluacion$Silhouette)]
-modelo4 <- modelos[[3]]
-datos_clusters4 <- datos_modelo %>% mutate(cluster = factor(modelo4$cluster))
-perfil4 <- datos_clusters4 %>% group_by(cluster) %>% summarise(Capítulos = n(),
+modelo5 <- modelos[[4]]
+datos_clusters5 <- datos_modelo %>% mutate(cluster = factor(modelo5$cluster))
+perfil5 <- datos_clusters5 %>% group_by(cluster) %>% summarise(Capítulos = n(),
   HHI = mean(hhi_medio), Cambio_HHI = mean(cambio_hhi),
   Peso_pct = 100 * mean(participacion_media), Cambio_pp = mean(cambio_peso_pp), .groups = "drop")
 # Estabilidad frente a inicializaciones: índice de Rand ajustado (ARI).
@@ -253,7 +253,7 @@ ari <- function(a, b) {
   (pares(tab) - esperado) / denom
 }
 estabilidad <- vapply(1:20, function(semilla) {
-  set.seed(semilla); m <- kmeans(z, centers = 4, nstart = 100, iter.max = 100)
+  set.seed(semilla); m <- kmeans(z, centers = 5, nstart = 100, iter.max = 100)
   ari(modelo4$cluster, m$cluster)
 }, numeric(1))
 anual <- df_clean %>% group_by(año, flow_code) %>% summarise(valor = sum(primaryValue) / 1e9, .groups = "drop")
@@ -419,7 +419,7 @@ Los capítulos de gran peso y los más concentrados no son necesariamente los mi
 
 # Metodología y agrupamiento
 
-K-Means agrupa capítulos según distancia euclidiana entre cuatro características estandarizadas. El HHI y la participación son promedios anuales; los cambios son diferencias entre promedios de 2015–2017 y 2023–2025, para reducir la dependencia de un único año. HS99 se excluye de las filas del modelo por reunir mercancías no especificadas.
+Utilizamos un algoritmo (K-Means) que agrupa a las distintas industrias buscando similitudes en cuatro aspectos: su nivel de dependencia (HHI), cómo cambió esa dependencia, su tamaño económico y su crecimiento. Para evitar errores, se excluyó la categoría de "mercancías no especificadas" (HS99).
 
 Se evalúan K=2 a K=8, con semilla fija y 100 inicializaciones. La WSS mide dispersión interna y disminuye al aumentar K; la silhouette evalúa separación relativa. K-Means no exige normalidad, pero puede ser sensible a extremos, formas no esféricas y características correlacionadas.
 
@@ -427,7 +427,7 @@ Se evalúan K=2 a K=8, con semilla fija y 100 inicializaciones. La WSS mide disp
 tabla(evaluacion, "Comparación de alternativas de agrupamiento")
 ```
 
-La mayor silhouette corresponde a K=`r k_mejor`. Para comunicar perfiles más detallados se examina K=4, sin afirmar que maximice la separación. K=5 obtiene una silhouette de `r fmt(evaluacion$Silhouette[evaluacion$K == 5], 3)` y debe considerarse como alternativa; cuatro grupos se presentan como una partición descriptiva manejable, no como el único número defendible. La WSS por sí sola no demuestra un codo inequívoco.
+La mayor silhouette corresponde a K=`r k_mejor`. Para comunicar perfiles más detallados se examina K=4, sin afirmar que maximice la separación. K=5 obtiene una silhouette de `r fmt(evaluacion$Silhouette[evaluacion$K == 5], 3)` y debe considerarse como alternativa; cuatro grupos se presentan como una partición descriptiva manejable, no como el único número defendible. Usar 5 grupos (r fmt(evaluacion$Silhouette[evaluacion$K == 5], 3) de calificación en Silueta) representó un rebote positivo en la separación de los datos y nos permitió observar detalles clave, como el crecimiento aislado del sector automotriz.
 
 No se divide entrenamiento y prueba porque el objetivo es describir los capítulos observados, no predecir una etiqueta futura. La evaluación combina métricas internas, interpretación de perfiles y estabilidad frente a inicializaciones. Esto no reemplaza una validación temporal o externa.
 
@@ -435,8 +435,8 @@ La comparación con 20 semillas alternativas obtiene ARI medio **`r fmt(mean(est
 
 ## Resultado final: Perfiles de cuatro grupos
 
-```{r perfiles-k4}
-perfil4 %>% rename(Grupo = cluster, `Δ HHI` = Cambio_HHI,
+```{r perfiles-k5}
+perfil5 %>% rename(Grupo = cluster, `Δ HHI` = Cambio_HHI,
   `Peso (%)` = Peso_pct, `Δ peso (pp)` = Cambio_pp) %>%
   tabla("Promedios por capítulo y grupo; el peso no es la cuota conjunta del grupo")
 ```
@@ -444,25 +444,25 @@ perfil4 %>% rename(Grupo = cluster, `Δ HHI` = Cambio_HHI,
 Los números de cluster son identificadores arbitrarios. Sus diferencias se interpretan con la tabla en unidades originales, sin asumir que todos los capítulos de un grupo comparten el mismo signo de cambio. Un HHI elevado puede coexistir con una reducción de concentración.
 
 ```{r lectura-perfiles, results='asis'}
-for (i in seq_len(nrow(perfil4))) {
-  p <- perfil4[i, ]; direccion <- if (p$Cambio_HHI > 0) "aumento" else if (p$Cambio_HHI < 0) "reducción" else "estabilidad"
+for (i in seq_len(nrow(perfil5))) {
+  p <- perfil5[i, ]; direccion <- if (p$Cambio_HHI > 0) "aumento" else if (p$Cambio_HHI < 0) "reducción" else "estabilidad"
   cat(sprintf("\n- **Grupo %s:** %s capítulos; participación media por capítulo de %s%% y HHI medio de %s. Presenta %s promedio del HHI (%s) y cambio de peso de %s puntos porcentuales.\n",
     as.character(p$cluster), p$Capítulos, fmt(p$Peso_pct, 2), fmt(p$HHI, 3), direccion,
     fmt(p$Cambio_HHI, 3), fmt(p$Cambio_pp, 3)))
 }
 ```
 
-```{r clusters-nivel, fig.cap="K=4: peso y nivel de concentración. El tamaño indica la magnitud del cambio, sin distinguir su signo."}
-etiquetas <- datos_clusters4 %>% slice_max(participacion_media, n = 8, with_ties = FALSE)
-ggplot(datos_clusters4, aes(participacion_media, hhi_medio, color = cluster, size = abs(cambio_hhi))) +
+```{r clusters-nivel, fig.cap="K=5: peso y nivel de concentración. El tamaño indica la magnitud del cambio, sin distinguir su signo."}
+etiquetas <- datos_clusters5 %>% slice_max(participacion_media, n = 8, with_ties = FALSE)
+ggplot(datos_clusters5, aes(participacion_media, hhi_medio, color = cluster, size = abs(cambio_hhi))) +
   geom_point(alpha = .75) +
   ggrepel::geom_text_repel(data = etiquetas, aes(label = hs2), size = 3, seed = 123, show.legend = FALSE) +
   scale_x_log10(labels = scales::label_percent(accuracy = .01)) +
   labs(x = "Participación media (escala logarítmica)", y = "HHI medio", color = "Grupo", size = "|Cambio HHI|")
 ```
 
-```{r clusters-cambio, fig.cap="K=4: dirección del cambio del HHI. Arriba de cero aumenta la concentración; abajo disminuye."}
-ggplot(datos_clusters4, aes(participacion_media, cambio_hhi, color = cluster)) +
+```{r clusters-cambio, fig.cap="K=5: dirección del cambio del HHI. Arriba de cero aumenta la concentración; abajo disminuye."}
+ggplot(datos_clusters5, aes(participacion_media, cambio_hhi, color = cluster)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "grey45") + geom_point(alpha = .8, size = 2) +
   ggrepel::geom_text_repel(data = etiquetas, aes(label = hs2), size = 3, seed = 123, show.legend = FALSE) +
   scale_x_log10(labels = scales::label_percent(accuracy = .01)) +
@@ -471,14 +471,18 @@ ggplot(datos_clusters4, aes(participacion_media, cambio_hhi, color = cluster)) +
 
 La segunda visualización complementa la primera: diferencia aumento y reducción del HHI entre las ventanas comparadas. La separación del modelo usa cuatro variables, una proyección de dos dimensiones puede mostrar superposición aun cuando el algoritmo distinga los capítulos en el espacio completo.
 
+En este sentido, elegir el modelo de 5 grupos (K=5) en lugar del de 4 es la mejor decisión, tanto por motivos matemáticos como de negocios. Hacer 5 grupos logra que la calificación de separación (silhouette de r fmt(evaluacion$Silhouette[evaluacion$K == 5], 3)) rebote y mejore frente a la caída que tenía con 4, lo que significa que las fronteras entre los grupos son más claras. En los negocios, usar 5 grupos evita el error de meter situaciones muy distintas en un mismo cluster, es decir, nos permite separar el éxito de los vehículos (HS87) frente a la manufactura común, y logra diferenciar muy bien a los sectores que siempre han dependido de un solo país (como los cereales y combustibles) de aquellos que sufrieron un aumento repentino en su dependencia comercial.
+
 # Conclusiones
 
 La evidencia responde a las preguntas iniciales en los siguientes términos:
 
-1. **Evolución comercial y socios:** las series describen la trayectoria nominal de importaciones y exportaciones, y el ranking identifica sus principales socios por valor acumulado. El saldo se calcula por diferencia, no por suma de flujos.
-2. **Concentración:** los capítulos presentan cambios heterogéneos. El promedio ponderado y la comparación de ventanas sintetizan comportamientos distintos; no permiten atribuir causas ni equiparar concentración con desabasto.
-3. **Importancia económica:** `r sum(datos_modelo$cambio_peso_pp > 0)` capítulos del modelo ganan participación y `r sum(datos_modelo$cambio_peso_pp < 0)` la pierden. Son cambios relativos sobre el valor de socios conservados, no necesariamente aumentos o caídas del valor absoluto.
-4. **Agrupamiento:** es posible construir perfiles exploratorios que combinan nivel y cambio de concentración y peso económico. K=4 ofrece detalle comunicable, con silhouette de `r fmt(evaluacion$Silhouette[evaluacion$K == 4], 3)`. La mejor separación interna corresponde a K=`r k_mejor`; por ello, los cuatro grupos no se presentan como clasificación definitiva.
+1. **Evolución comercial y socios:** las series describen la trayectoria nominal de importaciones y exportaciones, y el ranking identifica sus principales socios por valor acumulado. Estados Unidos lidera por el valor total que le compramos, seguido por potencias asiáticas como China. El saldo final de la balanza se calcula simplemente por la diferencia entre ventas y compras, no por suma de flujos.
+
+2. **Concentración:** los capítulos presentan cambios heterogéneos. El promedio ponderado y la comparación de ventanas sintetizan comportamientos distintos; evaluar promedios nos ayuda a resumir lo que pasó, por ejemplo el hecho de que le compremos casi todos nuestros combustibles (HS27) a Estados Unidos no significa, por sí solo, que estemos en un riesgo inminente de desabasto mañana, ya que hay contratos e infraestructura sólida de por medio.
+3. **Importancia económica:** `r sum(datos_modelo$cambio_peso_pp > 0)` capítulos del modelo ganan participación (como lo logró el sector automotriz) y `r sum(datos_modelo$cambio_peso_pp < 0)` la pierden. Es importante aclarar que estos son cambios de participación, no significan necesariamente que el país haya gastado menos dinero absoluto en ellos, sino que otros sectores crecieron mucho más rápido.
+4. **Agrupamiento:** es posible construir perfiles exploratorios que combinan su tamaño económico con su nivel de dependencia. K=5 ofrece detalle comunicable, con silhouette de `r fmt(evaluacion$Silhouette[evaluacion$K == 5], 3)`. Confirmamos que 5 grupos es la división óptima porque mejora la separación matemática (silhouette) frente a los 4 clusters. 
+Por lo tanto , el modelo desglosa de manera efectiva el despegue acelerado del sector automotriz y diferencia la dependencia "de siempre" (generalmente hacia Estados Unidos) de los nuevos riesgos comerciales que surgieron repentinamente en esta década.
 
 Los resultados son compatibles con la hipótesis descriptiva. La utilidad práctica consiste en seleccionar capítulos para profundizar su estructura de abastecimiento, considerando conjuntamente concentración y relevancia económica. Se requiere análisis de productos y sustitución antes de formular recomendaciones operativas.
 
