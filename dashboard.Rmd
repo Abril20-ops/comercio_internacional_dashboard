@@ -66,7 +66,7 @@ gris       <- "#6C757D"
 gris_claro <- "#B8C0C8"
 azul_claro <- "#EAF3FC"
 verde      <- "#3B9B6B"
-rojo       <- "#D9534F"
+rojo       <- "#9F8170"
 marino     <- "#2C3E50"
 
 col_socio <- c("EE. UU." = azul, "China" = naranja, "Otro país" = gris_claro)
