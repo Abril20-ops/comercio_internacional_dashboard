@@ -254,7 +254,7 @@ ari <- function(a, b) {
 }
 estabilidad <- vapply(1:20, function(semilla) {
   set.seed(semilla); m <- kmeans(z, centers = 5, nstart = 100, iter.max = 100)
-  ari(modelo4$cluster, m$cluster)
+  ari(modelo5$cluster, m$cluster)
 }, numeric(1))
 anual <- df_clean %>% group_by(año, flow_code) %>% summarise(valor = sum(primaryValue) / 1e9, .groups = "drop")
 saldo <- anual %>% pivot_wider(names_from = flow_code, values_from = valor) %>% mutate(saldo = X - M)
