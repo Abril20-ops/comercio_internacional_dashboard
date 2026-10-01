@@ -1,0 +1,2253 @@
+---
+title: "Análisis Exploratorio de Datos (EDA) y Preparación K-Means"
+author: "Análisis Comercial UN Comtrade"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+  pdf_document:
+    toc: true
+---
+
+## Contexto y Alcance de los Datos
+
+En el presente análisis utiliza información oficial proveniente del repositorio **UN Comtrade** (*United Nations International Trade Statistics Database*), gestionado por la División de Estadística de las Naciones Unidas. Esta base de datos es el estándar global para el registro y monitoreo del comercio internacional de mercancías entre países. El presente análisis será acotado a México como país que reporta, así como a productos con código de 2 dígitos conservando movimientos de importación y exportación.
+
+El análisis se acota a México (código M49: 484), considerando tanto movimientos de importación como de exportación durante el periodo 2015-2025. Los productos se estudian a nivel de Capítulo del Sistema Armonizado (HS a 2 dígitos) y los flujos se desglosan por país socio comercial.
+
+### ¿Qué representa esta información a grandes rasgos?
+
+A nivel macro, el conjunto de datos extraído documenta el **flujo comercial anual de bienes (importaciones y exportaciones)** hacia el país reportante (México, código M49: `484`) durante el periodo **2015-2025**, desglosado por producto y país socio comercial.
+
+Cada registro en este *dataset* captura tres dimensiones fundamentales del intercambio comercial:
+
+1. **Estructura Mercantil (¿Qué se comercia?):** Identificado mediante el código del **Sistema Armonizado (HS)** de clasificación arancelaria. En este estudio, los productos se agregan a nivel de **Capítulo (HS a 2 dígitos)** para evaluar los sectores económicos de procedencia.
+2. **Socio comercial (¿con quién se comercia?):** Representado por el código del país socio o proveedor (`partnerCode`), permitiendo rastrear la procedencia geográfica de las mercancías.
+3. **Magnitud Económica (¿Cuánto se comercia?):** Expresado a través del valor comercial oficial en dólares estadounidenses (`primaryValue` / `fobvalue`), que mide el volumen financiero del intercambio.
+
+---
+
+### Propósito del Análisis
+
+El propósito general de este análisis es comprender la evolución de la estructura comercial de México entre 2015 y 2025, utilizando las importaciones y exportaciones como contexto general y profundizando en las importaciones para analizar la importancia económica de los distintos capítulos HS2, la composición de sus países proveedores y los cambios en su nivel de concentración.
+
+A partir de este propósito se plantean las siguientes preguntas que guían el análisis:
+
+- ¿Cómo han evolucionado las importaciones y exportaciones de México entre 2015 y 2025 y cuáles han sido los principales socios a lo largo del periodo?
+
+- ¿Cómo ha evolucionado la concentración de proveedores de los distintos capítulos HS2 entre 2015 y 2025?
+
+- ¿Cómo ha cambiado la importancia económica de los distintos capítulos HS2 dentro de las importaciones mexicanas durante el periodo analizado?
+
+- ¿Es posible identificar grupos de capítulos HS2 con perfiles similares de importancia económica y concentración de proveedores, considerando tanto sus niveles como los cambios observados entre el inicio y el final del periodo?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+# 1. Carga de librerías esenciales
+library(jsonlite)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+library(scales)
+library(e1071)      # Asimetría (skewness) y Curtosis (kurtosis)
+library(corrplot)   # Matriz de correlación
+library(ggrepel)    # Etiquetas dinámicas en gráficos
+library(gridExtra)  # Disposición de gráficos
+library(cluster)    # Cálculo de silueta y algoritmos de agrupamiento
+library(comtradr)   # Cliente oficial de la API de UN Comtrade
+library(stringr)
+
+# 2. Carga de la data
+# Usamos un archivo de respaldo local (.rds) que almacena la descarga 2015-2025 de comtradr sin mostrar la API Key en el documento público. 
+# Si no existe el archivo, lo descarga automáticamente.
+
+
+readRenviron("~/.Renviron")
+archivo_resp_local <- "comtrade_mex_2015_2025.rds"
+necesita_descarga <- TRUE
+
+if (file.exists(archivo_resp_local)) {
+  df_comercio_raw <- readRDS(archivo_resp_local)
+  if (!is.null(df_comercio_raw) && nrow(df_comercio_raw) > 0 && ncol(df_comercio_raw) > 5) {
+    necesita_descarga <- FALSE
+  } else {
+    file.remove(archivo_resp_local)
+  }
+}
+# Descarga de UN Comtrade (2015-2025) usando la variable de entorno oculta en ~/.Renviron
+if (necesita_descarga) {
+  if (Sys.getenv("COMTRADE_PRIMARY") == "") {
+    stop("No se encontró COMTRADE_PRIMARY en ~/.Renviron.")
+  }
+
+# Obtenemos únicamente los códigos de 2 dígitos ("01" a "97") validados por el catálogo de comtradr
+  tabla_hs <- ct_get_ref_table("HS")
+  codigos_hs2 <- intersect(sprintf("%02d", 1:99), tabla_hs$id)
+
+  # 2015 a 2019 
+  bloque_1 <- ct_get_data(
+    reporter = "MEX",
+    partner = "all_countries",
+    commodity_code = codigos_hs2,
+    start_date = 2015,
+    end_date = 2019,
+    flow_direction = c("import", "export")
+  )
+
+  # 2020 a 2025
+  bloque_2 <- ct_get_data(
+    reporter = "MEX",
+    partner = "all_countries",
+    commodity_code = codigos_hs2,
+    start_date = 2020,
+    end_date = 2025,
+    flow_direction = c("import", "export")
+  )
+
+  df_comercio_raw <- bind_rows(as_tibble(bloque_1), as_tibble(bloque_2))
+
+  if (nrow(df_comercio_raw) > 0) {
+    saveRDS(df_comercio_raw, archivo_resp_local, compress = "xz")
+  }
+}
+
+# Verificación de integridad de la base
+stopifnot("Error: La descarga de Comtrade vino vacía." = nrow(df_comercio_raw) > 0)
+
+# Estandarización de columnas:
+# Si los datos vienen de comtradr, renombramos las columnas según el Diccionario de Datos (partnerCode, cmdCode, primaryValue, etc.)
+
+df_comercio <- df_comercio_raw %>%
+rename(
+    reporterCode = any_of("reporter_code"),
+    partnerCode  = any_of("partner_code"),
+    partnerDesc  = any_of("partner_desc"),
+    partner2Code = any_of("partner_2_code"),
+    cmdCode      = any_of("cmd_code"),
+    cmdDesc      = any_of("cmd_desc"),
+    primaryValue = any_of("primary_value"),
+    customsCode  = any_of("customs_code"),
+    motCode      = any_of("mot_code"),
+    flow_code    = any_of("flowCode")
+  )
+
+# Asegurar columnas auxiliares por compatibilidad
+if (!"flow_code" %in% names(df_comercio) && "flow_desc" %in% names(df_comercio)) {
+  df_comercio <- df_comercio %>% mutate(flow_code = flow_desc)
+}
+if (!"partnerDesc" %in% names(df_comercio)) {
+  df_comercio <- df_comercio %>% mutate(partnerDesc = paste("Socio", partnerCode))
+}
+if (!"cmdDesc" %in% names(df_comercio)) {
+  df_comercio <- df_comercio %>% mutate(cmdDesc = paste("Capítulo", substr(cmdCode, 1, 2)))
+}
+
+```
+
+### Preparación de la información
+Descargamos datos anuales de UN Comtrade sobre el comercio de bienes reportado por México entre 2015 y 2025. La consulta incluye importaciones (M) y exportaciones (X), todos los países socios disponibles y productos clasificados por capítulo HS de dos dígitos. La descarga se hizo en dos bloques, 2015–2019 y 2020–2025, y se guarda en un .rds para no repetirla cada vez que se ejecuta el Rmd.
+
+Aunque la consulta fue diseñada para obtener información a nivel HS2 y por país socio, se aplicaron controles adicionales de integridad antes de realizar cualquier agregación monetaria. En particular, se verificó lo siguiente:
+
+* **cmdCode contenga  2 dígitos:**: se conservaron únicamente códigos HS de dos dígitos (nchar(cmdCode) == 2) y se excluyó el agregado general TOTAL `nchar(cmdCode) == 2`  
+* **Sin totales mundiales:** se excluyó el agregado mundial (partnerCode != 0) para trabajar con países socios individualmente identificados.
+* **Sin desgloses secundarios:**  se conservaron únicamente registros sin un desglose adicional de segundo socio `partner2Code == 0`
+* **Modo de transportes:**cuando se encuentra disponible, se conserva únicamente el agregado correspondiente al total de modos de transporte `motCode  == 0`
+* **Valor comercial:** se conservaron registros con primaryValue disponible y mayor que cero.
+
+```{r extracción de variables, echo=FALSE}
+# Filtrado de transacciones válidas y selección de variables clave
+df_clean <- df_comercio %>%
+  filter(!is.na(primaryValue), primaryValue > 0, partnerCode != 0, partnerCode != "0", !partnerDesc %in% c("World", "Mundo"),
+         cmdCode != "TOTAL", nchar(trimws(as.character(cmdCode))) == 2,
+         if ("partner2Code" %in% names(.)) (is.na(partner2Code) | partner2Code == 0) 
+         else TRUE,
+         if ("customsCode" %in% names(.)) (is.na(customsCode) | customsCode == "C00") 
+         else TRUE,
+         if ("motCode" %in% names(.)) (is.na(motCode) | motCode == 0) 
+         else TRUE
+  ) %>%
+  select(
+    period,
+    reporterCode,
+    partnerCode,
+    partnerDesc,
+    cmdCode,
+    cmdDesc,
+    primaryValue,
+    fobvalue,
+    flow_code,
+    flow_desc
+  ) %>%
+  mutate(
+    año = as.integer(substr(as.character(period), 1, 4)),
+    # Extraer Capítulo HS2 (primeros 2 dígitos del código del producto)
+    hs2 = substr(trimws(as.character(cmdCode)), 1, 2),
+    # Convertir monto a Millones de USD para facilitar interpretación
+    val_musd = primaryValue / 1e6,
+    #Estandarizar el codigo de flujo en "M" (importaciones) y "X" (Exportaciones)
+    flow_code = case_when(
+      toupper(as.character(flow_code)) %in% c("M", "Import", "Imports", "1") ~ "M",
+      toupper(as.character(flow_code)) %in% c("X", "Export", "Exports", "2") ~ "X",
+      TRUE ~ as.character(flow_code)
+    )
+  )
+
+# Resumen de calidad de datos
+cat("Registros originales:", comma(nrow(df_comercio)), "\n")
+cat("Registros limpios a nivel Capítulo HS2:", comma(nrow(df_clean)), "\n")
+cat ("Periodo temporal en la base limpia:", min(df_clean$año, na.rm = TRUE), "-", max(df_clean$año, na.rm = TRUE), "\n")
+cat("Valores NAs en la variable de valor monetario:", sum(is.na(df_clean$primaryValue)), "\n")
+
+```
+
+
+```{r include=FALSE}
+# Ver qué tipo de dato tiene cada columna
+str(df_clean)
+
+# Separar automáticamente por tipo
+variables_categoricas <- df_clean %>%
+  select(where(is.character)) %>%
+  names()
+
+variables_continuas <- df_clean %>%
+  select(where(is.numeric)) %>%
+  names()
+```
+
+### Diccionario de datos seleccionados
+
+La base contiene 93,942 registros y 13 variables. Cada registro representa el valor comercial de una combinación de año, flujo, país socio y capítulo HS2.
+
+PrimaryValue contiene el valor en USD corrientes, mientras que val_musd expresa ese mismo valor en millones de USD. 
+
+
+| Variable | Tipo | Descripción | Uso en el análisis |
+|:--|:--|:--|:--|
+| `period` | Texto | Año de referencia, por ejemplo `"2015"`. | Identificar el periodo original. |
+| `reporterCode` | Entero | Código M49 del país que reporta, `484` corresponde a México. | Verificar el alcance geográfico. |
+| `partnerCode` | Entero | Código M49 del país socio. | Identificar proveedores y destinos, |
+| `partnerDesc` | Texto | Nombre del país socio. | Etiquetas en tablas y gráficas. |
+| `cmdCode` | Texto | Código del capítulo HS de dos dígitos, por ejemplo `"01"`. | Identificar el capítulo sin perder ceros iniciales. |
+| `cmdDesc` | Texto | Descripción del capítulo HS2. | Interpretar las categorías de mercancías representadas por cada capítulo. |
+| `primaryValue` | Numérico | Valor comercial registrado en USD corrientes. | Calcular totales, participaciones e índices de concentración. |
+| `fobvalue` | Numérico | Valor FOB en USD, cuando está disponible. | Revisar la información de valoración, no se suma a `primaryValue`. |
+| `flow_code` | Texto | Dirección del flujo: `M` para importación y `X` para exportación. | Separar los dos tipos de comercio. |
+| `flow_desc` | Texto | Descripción del flujo: `Import` o `Export`. | Etiquetas legibles en tablas y gráficas. |
+| `año` | Entero | Año numérico obtenido de `period`. | Construir series y comparaciones anuales. |
+| `hs2` | Texto | Código HS2 derivado de `cmdCode`, en esta extracción coinciden. | Agrupar el comercio por capítulo y definir la unidad de análisis del modelo K-Means. |
+| `val_musd` | Numérico | `primaryValue / 1,000,000`, en millones de USD. | Presentar valores en una escala legible. |
+
+**Unidad de observación:** año × flujo × país socio × capítulo HS2. La combinación `año + flow_code + partnerCode + hs2` debe revisarse para detectar duplicados.
+
+---
+
+### Análisis de variables clave
+
+Para comenzar a caracterizar la estructura comercial de México, se busca responder la primera pregunta del análisis:
+
+**¿Cómo han evolucionado las importaciones y exportaciones de México entre 2015 y 2025 y cuáles han sido los principales socios y capítulos HS2 a lo largo del periodo?**
+
+En primer lugar, se analiza la evolución anual del valor de las importaciones y exportaciones para identificar la trayectoria general del comercio mexicano durante el periodo estudiado.
+
+```{r echo=FALSE}
+# Datos por año y movimiento
+balanza_anual <- df_clean %>%
+  group_by(period, flow_desc) %>%
+  summarise(total_primaryValue = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop")
+
+# Total de exportaciones e importaciones
+totales_anuales <- balanza_anual %>%
+  group_by(period) %>%
+  summarise(total_general = sum(total_primaryValue, na.rm = TRUE))
+
+#Gráfica apreciar mejor los movimientos de importaciones y exportaciones por año.
+ggplot(
+  balanza_anual,
+  aes(
+    x = as.integer(period),
+    y = total_primaryValue,
+    color = flow_desc,
+    group = flow_desc
+  )
+) +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 2.5) +
+  scale_x_continuous(breaks = 2015:2025) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Evolución de las importaciones y exportaciones de México",
+    subtitle = "Valor comercial anual, 2015–2025",
+    x = NULL,
+    y = "Valor comercial (millones de USD)",
+    color = "Flujo"
+  ) +
+  theme_minimal()
+
+
+```
+
+A partir de la gráfica se observa una tendencia general de crecimiento del valor nominal entre 2015 y 2025, aunque no de forma continua. En 2020 se presenta una disminución tanto en importaciones como en exportaciones respecto de 2019, coincidiendo con el periodo de disrupciones internacionales asociado a la pandemia de COVID-19. A partir de 2021 ambos flujos muestran una recuperación y alcanzan sus mayores valores hacia el final del periodo.
+
+
+Dado que los valores están expresados en USD corrientes, este comportamiento describe la evolución del valor monetario reportado y no debe interpretarse directamente como crecimiento del volumen físico comerciado.
+
+El siguiente paso consiste en analizar los principales socios del comercio mexicano.
+
+**Principales socios comerciales**
+
+Las siguientes tablas muestran los cinco principales socios de México en exportaciones e importaciones de acuerdo con el valor comercial acumulado nominal durante el periodo analizado.
+
+*IMPORTACIONES*
+```{r echo=FALSE}
+t5_importa <- df_clean %>%
+  filter(flow_desc == "Import") %>%
+  group_by(partnerDesc) %>%
+  summarise(
+    valor_usd = sum(primaryValue, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    porcentaje = valor_usd / sum(valor_usd),
+    total_valor_musd = valor_usd / 1e6
+  ) %>%
+  arrange(desc(valor_usd)) %>%
+  slice_head(n = 5) %>%
+  mutate(
+    total_valor_M_usd = scales::comma(total_valor_musd, accuracy = 1),
+    porcentaje = scales::percent(porcentaje, accuracy = 0.1)
+  ) %>%
+  select(
+    partnerDesc,
+    total_valor_M_usd,
+    porcentaje
+  )
+
+print(t5_importa)
+```
+
+*EXPORTACIONES*
+```{r echo=FALSE}
+t5_exporta <- df_clean %>%
+  filter(flow_desc == "Export") %>%
+  group_by(partnerDesc) %>%
+  summarise(
+    valor_usd = sum(primaryValue, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    porcentaje = valor_usd / sum(valor_usd),
+    total_valor_M_usd = valor_usd / 1e6
+  ) %>%
+  arrange(desc(valor_usd)) %>%
+  slice_head(n = 5) %>%
+  mutate(
+    total_valor_M_usd = scales::comma(total_valor_M_usd, accuracy = 1),
+    porcentaje = scales::percent(porcentaje, accuracy = 0.1)
+  ) %>%
+  select(
+    partnerDesc,
+    total_valor_M_usd,
+    porcentaje
+  )
+
+print(t5_exporta)
+
+```
+Los resultados permiten identificar a los países que concentraron los mayores valores comerciales acumulados durante 2015–2025. En particular, Estados Unidos ocupa una posición predominante tanto como destino de las exportaciones mexicanas como entre los proveedores de las importaciones.
+
+Veamos si a lo largo del tiempo estos 5 socios han cambiado.
+
+**Evolución de la participación de los principales socios**
+
+Para cada año se calcula la proporción del valor importado correspondiente al proveedor principal (Top 1) y a los tres principales proveedores en conjunto (Top 3). 
+
+*IMPORTACIONES*
+```{r echo=FALSE}
+
+socios_import_anuales <- df_clean %>%
+  filter(flow_code == "M") %>%
+  group_by(año, partnerCode, partnerDesc) %>%
+  summarise(
+    valor_usd = sum(primaryValue, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(año) %>%
+  mutate(
+    participacion = valor_usd / sum(valor_usd),
+    ranking = row_number(desc(valor_usd))
+  ) %>%
+  ungroup()
+
+# Top 5 países proveedores de cada año
+top5_anual <- socios_import_anuales %>%
+  group_by(año) %>%
+  arrange(desc(valor_usd), .by_group = TRUE) %>%
+  slice_head(n = 5) %>%
+  mutate(
+    posicion = row_number(),
+    participacion_pct = 100 * participacion
+  ) %>%
+  ungroup()
+etiquetas_inicio <- top5_anual %>%
+  group_by(partnerDesc) %>%
+  slice_min(año, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+
+ggplot(
+  top5_anual,
+  aes(
+    x = año,
+    y = posicion,
+    color = partnerDesc,
+    group = partnerDesc
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+
+  geom_text(
+    data = etiquetas_inicio,
+    aes(label = partnerDesc),
+    hjust = 1.1,
+    size = 3,
+    fontface = "bold",
+    show.legend = FALSE
+  ) +
+
+
+  scale_y_reverse(
+    breaks = 1:5,
+    labels = paste("Top", 1:5)
+  ) +
+
+  scale_x_continuous(
+    breaks = 2015:2025,
+    expand = expansion(mult = c(0.12, 0.22))
+  ) +
+
+  labs(
+    title = "Evolución de los principales proveedores de México",
+    subtitle = "Cambios en el ranking anual de los cinco principales países proveedores",
+    x = NULL,
+    y = "Posición",
+    color = "Proveedor"
+  ) +
+
+  theme_minimal() +
+  theme(
+    legend.position = "none"
+  )
+
+
+# Socios/categorías que queremos seguir en el tiempo
+paises_interes <- c(
+  "USA",
+  "China",
+  "Japan",
+  "Rep. of Korea",
+  "Germany",
+  "Viet Nam",
+  "Other Asia, nes"
+)
+
+# Total anual de importaciones
+total_import_anual <- df_clean %>%
+  filter(flow_code == "M") %>%
+  group_by(año) %>%
+  summarise(
+    total_import_usd = sum(primaryValue, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Participación anual de los países/categorías seleccionados
+participacion_paises <- df_clean %>%
+  filter(flow_code == "M", partnerDesc %in% paises_interes) %>%
+  group_by(año, partnerDesc) %>%
+  summarise(
+    valor_usd = sum(primaryValue, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(total_import_anual, by = "año") %>%
+  mutate(
+    participacion = valor_usd / total_import_usd,
+    tipo = ifelse(partnerDesc == "Other Asia, nes",
+                  "Etiqueta no específica", "País")
+  )
+
+# Etiquetas al final de cada línea
+etiquetas_finales <- participacion_paises %>%
+  group_by(partnerDesc) %>%
+  slice_max(año, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+ggplot(
+  participacion_paises,
+  aes(
+    x = año,
+    y = participacion,
+    color = partnerDesc,
+    group = partnerDesc,
+    linetype = tipo
+  )
+) +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 2) +
+  ggrepel::geom_text_repel(
+    data = etiquetas_finales,
+    aes(label = partnerDesc),
+    direction = "y",
+    hjust = 0,
+    nudge_x = 0.5,
+    size = 3,
+    show.legend = FALSE
+  ) +
+  scale_x_continuous(
+    breaks = 2015:2025,
+    expand = expansion(mult = c(0.02, 0.18))
+  ) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Participación anual de las importaciones de México",
+    subtitle = "Evolución de la participación sobre el valor total importado, 2015–2025",
+    x = NULL,
+    y = "Participación en las importaciones",
+    color = "Socio / categoría",
+    linetype = NULL
+  ) +
+  theme_minimal()
+
+```
+
+Las dos visualizaciones muestran que la estructura de los principales proveedores de México Estados Unidos se mantiene como el principal proveedor durante todo el periodo 2015–2025 y China conserva el segundo lugar. No obstante, la participación de Estados Unidos disminuye gradualmente, mientras que la de China permanece relativamente estable e incluso aumenta ligeramente hacia los últimos años.
+
+
+A partir del tercer lugar se observa una mayor rotación. Japón, República de Corea y Alemania intercambian posiciones durante buena parte del periodo, mientras que hacia los años más recientes aparecen nuevos cambios en la composición de los principales proveedores. En particular, en 2025 destaca el incremento de Other Asia, nes y la presencia de Viet Nam entre los proveedores de mayor participación.
+
+El aumento reciente de la participación de proveedores asiáticos podría estar relacionado con una reconfiguración de las cadenas de suministro internacionales posterior a las tensiones comerciales entre Estados Unidos y China. En particular, los aranceles aplicados a productos chinos desde 2018 y las medidas posteriores sobre sectores tecnológicos pudieron generar incentivos para diversificar proveedores y relocalizar etapas de producción hacia México y otros países asiáticos.
+
+
+
+*EXPORTACIONES*
+```{r echo=FALSE}
+
+socios_import_anuales <- df_clean %>%
+  filter(flow_code == "X") %>%
+  group_by(año, partnerCode, partnerDesc) %>%
+  summarise(
+    valor_usd = sum(primaryValue, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(año) %>%
+  mutate(
+    participacion = valor_usd / sum(valor_usd),
+    ranking = row_number(desc(valor_usd))
+  ) %>%
+  ungroup()
+
+# Top 5 países proveedores de cada año
+top5_anual <- socios_import_anuales %>%
+  group_by(año) %>%
+  arrange(desc(valor_usd), .by_group = TRUE) %>%
+  slice_head(n = 5) %>%
+  mutate(
+    posicion = row_number(),
+    participacion_pct = 100 * participacion
+  ) %>%
+  ungroup()
+
+etiquetas_inicio <- top5_anual %>%
+  group_by(partnerDesc) %>%
+  slice_min(año, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+
+ggplot(
+  top5_anual,
+  aes(
+    x = año,
+    y = posicion,
+    color = partnerDesc,
+    group = partnerDesc
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+
+
+  scale_y_reverse(
+    breaks = 1:5,
+    labels = paste("Top", 1:5)
+  ) +
+
+  scale_x_continuous(
+    breaks = 2015:2025,
+    expand = expansion(mult = c(0.12, 0.22))
+  ) +
+
+  labs(
+    title = "Evolución de los principales Compradores de México",
+    subtitle = "Cambios en el ranking anual de los cinco principales países Compradores",
+    x = NULL,
+    y = "Posición",
+    color = "Proveedor"
+  ) +
+
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(
+    angle = 45,
+    hjust = 1
+  )
+  )
+
+
+# Socios/categorías que queremos seguir en el tiempo
+paises_interes <- c(
+  "USA",
+  "Canada",
+  "China",
+  "Brazil",
+  "Colombia",
+  "Germany",
+  "Japan",
+  "Spain",
+  "North America and Central America, nes",
+  "Other Asia, nes",
+  "Rest of America, nes"
+)
+# Total anual de importaciones
+total_import_anual <- df_clean %>%
+  filter(flow_code == "X") %>%
+  group_by(año) %>%
+  summarise(
+    total_import_usd = sum(primaryValue, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Participación anual de los países/categorías seleccionados
+participacion_paises <- df_clean %>%
+  filter(flow_code == "X", partnerDesc %in% paises_interes) %>%
+  group_by(año, partnerDesc) %>%
+  summarise(
+    valor_usd = sum(primaryValue, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(total_import_anual, by = "año") %>%
+  mutate(
+    participacion = valor_usd / total_import_usd,
+    tipo = ifelse(partnerDesc == "Other Asia, nes",
+                  "Etiqueta no específica", "País")
+  )
+
+# Etiquetas al final de cada línea
+etiquetas_finales <- participacion_paises %>%
+  group_by(partnerDesc) %>%
+  slice_max(año, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+ggplot(
+  participacion_paises,
+  aes(
+    x = año,
+    y = participacion,
+    color = partnerDesc,
+    group = partnerDesc,
+    linetype = tipo
+  )
+) +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 2) +
+  ggrepel::geom_text_repel(
+    data = etiquetas_finales,
+    aes(label = partnerDesc),
+    direction = "y",
+    hjust = 0,
+    nudge_x = 0.5,
+     angle = 30,
+  
+    size = 3,
+    show.legend = FALSE
+  ) +
+  scale_x_continuous(
+    breaks = 2015:2025,
+    expand = expansion(mult = c(0.02, 0.18))
+  ) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Participación de compra de México",
+    subtitle = "Evolución de la participación sobre el valor total comprado, 2015–2025",
+    x = NULL,
+    y = "Participación en las importaciones",
+    color = "Socio / categoría",
+    linetype = NULL
+  ) +
+  theme_minimal()
+
+```
+
+
+En las exportaciones se observa que Estados Unidos se mantiene en la primera posición durante todo el periodo 2015–2025 y concentra una proporción ampliamente superior a la del resto de los compradores.A partir de la segunda posición existe una mayor movilidad.
+
+El análisis muestra diferencias entre la estructura  de las importaciones y exportaciones. Sin embargo, esta visión puede ocultar comportamientos distintos entre categorías de productos. Un capítulo HS2 puede concentrar gran parte de su comercio en un solo socio, mientras que otro puede distribuirlo entre numerosos países.
+
+Por ello, el siguiente paso consiste en medir la concentración de socios dentro de cada capítulo HS2 y para cada año, con especial atención a las importaciones, que constituyen el foco principal del análisis.
+
+Para cada año, flujo y capítulo, la participación del socio es $p_i = valor_i / \sum_j valor_j$. El índice de Herfindahl–Hirschman es $HHI = \sum_i p_i^2$. Cercano a 1 implica mayor concentración de **valor**, el número efectivo de socios es $1/HHI$. `top1` mide la cuota del socio principal. Los socios sin valor positivo observado no se imputan como cero.Adicionalmente, se calcula participacion, que representa el peso de cada capítulo HS2 dentro del valor total del flujo comercial correspondiente a cada año
+
+
+
+**- ¿Cómo ha evolucionado la concentración de proveedores de los distintos capítulos HS2 entre 2015 y 2025?**
+
+El análisis muestra diferencias entre la estructura  de las importaciones . Sin embargo, esta visión puede ocultar comportamientos distintos entre categorías de productos. Un capítulo HS2 puede concentrar gran parte de su comercio en un solo socio, mientras que otro puede distribuirlo entre numerosos países.
+
+Por ello, el siguiente paso consiste en medir la concentración de socios dentro de cada capítulo HS2 y para cada año, con especial atención a las importaciones, que constituyen el foco principal del análisis.
+
+Para cada año, flujo y capítulo, la participación del socio es $p_i = valor_i / \sum_j valor_j$. El índice de Herfindahl–Hirschman es $HHI = \sum_i p_i^2$. Cercano a 1 implica mayor concentración de **valor**, el número efectivo de socios es $1/HHI$. `top1` mide la cuota del socio principal. Los socios sin valor positivo observado no se imputan como cero.Adicionalmente, se calcula participacion, que representa el peso de cada capítulo HS2 dentro del valor total del flujo comercial correspondiente a cada año
+
+
+
+
+```{r indicadores}
+library(dplyr)
+
+# Primero dejamos un valor por año, flujo, capítulo y país socio.
+por_socio <- df_clean %>%
+  filter(
+    flow_code %in% c("M", "X"),
+    !is.na(partnerCode),
+    !is.na(primaryValue),
+    primaryValue > 0
+  ) %>%
+  group_by(año, flow_code, hs2, partnerCode) %>%
+  summarise(
+    valor_socio_usd = sum(primaryValue),
+    socio_nombre = first(partnerDesc),
+    capitulo = first(cmdDesc),
+    .groups = "drop"
+  )
+
+# Después calculamos la concentración dentro de cada capítulo.
+indicadores <- por_socio %>%
+  group_by(año, flow_code, hs2) %>%
+  mutate(share_socio = valor_socio_usd / sum(valor_socio_usd)) %>%
+  summarise(
+    valor_usd = sum(valor_socio_usd),
+    socios = n_distinct(partnerCode),
+    hhi = sum(share_socio^2),
+    top1 = max(share_socio),
+    socio_principal = socio_nombre[which.max(share_socio)],
+    capitulo = first(capitulo),
+    .groups = "drop"
+  ) %>%
+  group_by(año, flow_code) %>%
+  mutate(
+    participacion = valor_usd / sum(valor_usd),
+    socios_efectivos = 1 / hhi
+  ) %>%
+  ungroup()
+
+stopifnot(all(indicadores$hhi > 0 & indicadores$hhi <= 1 + 1e-10))
+
+dir.create("datos", showWarnings = FALSE)
+saveRDS(indicadores, "datos/indicadores.rds")
+
+```
+
+Como primera aproximación, se examinan los capítulos de importación con mayor concentración en 2025. Esta comparación permite identificar qué categorías presentan valores elevados de HHI y determinar si dicha concentración corresponde además a capítulos de importancia económica relevante.
+
+```{r indicadores 2025}
+tabla_indicadores_2025 <- indicadores %>%
+  filter(año == 2025, flow_code == "M") %>%
+  arrange(desc(hhi)) %>%
+  mutate(
+    valor_musd = valor_usd / 1e6,
+    top1_pct = 100 * top1
+  ) %>%
+  select(
+    `HS2` = hs2,
+    `Capítulo` = capitulo,
+    `Valor (M USD)` = valor_musd,
+    `Núm. de socios` = socios,
+    `HHI` = hhi,
+    `Proveedor principal (%)` = top1_pct,
+    `Proveedor principal` = socio_principal
+  ) %>%
+  slice_head(n = 10)
+
+knitr::kable(
+  tabla_indicadores_2025,
+  digits = c(0, 0, 1, 0, 3, 1, 0),
+  format.args = list(
+    big.mark = ","
+  ),
+  caption = "Diez capítulos HS2 con mayor concentración de proveedores en 2025"
+)
+```
+### Hallazgos principales: concentración de importaciones en 2025
+
+- **Combustibles y aceites minerales (HS2 `27`) combinan valor elevado y alta concentración:** México importó aproximadamente **37,000 millones de USD** y **93.3%** del valor provino de USA.
+- **Cereales (HS2 `10`) muestran un patrón similar:** el valor importado fue de aproximadamente **8,180 millones de USD**, con **89.6%** procedente de USA.
+- **Plumas y artículos relacionados (HS2 `67`) tienen el HHI más alto**, pero su valor importado fue mucho menor (**92.9 millones de USD**). Por ello, la concentración debe interpretarse junto con la importancia económica del capítulo.
+- **Contar países no basta para medir diversificación:** en preparaciones alimenticias diversas (HS2 `21`) aparecen **50 socios**, pero USA concentra **74.8%** del valor.
+
+Entre los capítulos mostrados, `27` y `10` destacan por combinar valores importados elevados con una fuerte concentración en un socio. Estos resultados describen el **valor comercial registrado en 2025**, por sí solos no miden cantidades físicas ni riesgo de desabasto.
+
+
+```{r indicadores 2015}
+tabla_indicadores_2015 <- indicadores %>%
+  filter(año == 2015, flow_code == "M") %>%
+  arrange(desc(hhi)) %>%
+  mutate(
+    valor_musd = valor_usd / 1e6,
+    top1_pct = 100 * top1
+  ) %>%
+  select(
+    `HS2` = hs2,
+    `Capítulo` = capitulo,
+    `Valor (M USD)` = valor_musd,
+    `Núm. de socios` = socios,
+    `HHI` = hhi,
+    `Proveedor principal (%)` = top1_pct,
+    `Proveedor principal` = socio_principal
+  ) %>%
+  slice_head(n = 10)
+
+knitr::kable(
+  tabla_indicadores_2015,
+  digits = c(0, 0, 1, 0, 3, 1, 0),
+  format.args = list(
+    big.mark = ","
+  ),
+  caption = "Diez capítulos HS2 con mayor concentración de proveedores en 2015"
+)
+```
+
+### Hallazgos relevantes: concentración de importaciones en 2015
+
+- **Combustibles minerales (HS2 `27`) combinó valor elevado y concentración:** México importó aproximadamente **26,456 millones de USD** y **84.2%** del valor provino de USA. Fue el capítulo de mayor valor entre los diez con HHI más alto.
+
+- **Residuos de la industria alimentaria y forraje (HS2 `23`) fue el más concentrado de los diez:** registró un HHI de **0.870** y USA aportó **93.2%** de los aproximadamente **1,623 millones de USD** importados.
+
+- **Un número alto de socios no garantiza que el valor esté repartido:** en preparaciones alimenticias diversas (HS2 `21`) aparecen **57 países**, pero USA concentró **83.1%** del valor.
+
+- **USA fue el socio principal en ocho de los diez capítulos** con mayor HHI. China fue el socio principal en los capítulos `66` y `67`, que también mostraron alta concentración, aunque con valores importados mucho menores.
+
+
+Veamos su cambio de 2015 a 2025 
+
+
+
+```{r indicadores 2025 1}
+comparacion_hhi <- indicadores %>%
+  filter(
+    flow_code == "M",
+    año %in% c(2015, 2025)
+  ) %>%
+  select(
+    año,
+    hs2,
+    capitulo,
+    hhi,
+    top1,
+    socio_principal
+  ) %>%
+  pivot_wider(
+    names_from = año,
+    values_from = c(hhi, top1, socio_principal)
+  ) %>%
+  filter(
+    !is.na(hhi_2015),
+    !is.na(hhi_2025)
+  ) %>%
+  mutate(
+    cambio_hhi = hhi_2025 - hhi_2015,
+    cambio_top1_pp = 100 * (top1_2025 - top1_2015)
+  )
+comparacion_hhi <- indicadores %>%
+  filter(
+    flow_code == "M",
+    año %in% c(2015, 2025)
+  ) %>%
+  select(
+    año,
+    hs2,
+    capitulo,
+    hhi,
+    top1,
+    socio_principal
+  ) %>%
+  pivot_wider(
+    names_from = año,
+    values_from = c(hhi, top1, socio_principal)
+  ) %>%
+  filter(
+    !is.na(hhi_2015),
+    !is.na(hhi_2025)
+  ) %>%
+  mutate(
+    cambio_hhi = hhi_2025 - hhi_2015,
+    top1_2015_pct = 100 * top1_2015,
+    top1_2025_pct = 100 * top1_2025,
+    cambio_top1_pp = top1_2025_pct - top1_2015_pct
+  )
+comparacion_hhi %>%
+  arrange(desc(cambio_hhi)) %>%
+  slice_head(n = 10) %>%
+  select(
+    `HS2` = hs2,
+    `Capítulo` = capitulo,
+    `HHI 2015` = hhi_2015,
+    `HHI 2025` = hhi_2025,
+    `Cambio HHI` = cambio_hhi,
+    `Top 1 2015 (%)` = top1_2015_pct,
+    `Top 1 2025 (%)` = top1_2025_pct,
+    `Cambio Top 1 (pp)` = cambio_top1_pp,
+    `Proveedor 2015` = socio_principal_2015,
+    `Proveedor 2025` = socio_principal_2025
+  ) %>%
+  knitr::kable(
+    digits = c(0, 0, 3, 3, 3, 1, 1, 1, 0, 0),
+    caption = "Capítulos con mayor aumento en la concentración de proveedores entre 2015 y 2025"
+  )
+
+```
+
+
+Al comparar 2015 con 2025 se observa que el aumento de la concentración de proveedores no ocurrió de la misma manera en todos los capítulos. En algunos casos, el proveedor principal se mantuvo sin cambios pero incrementó considerablemente su participación. Por ejemplo, en seda (HS50) China pasó de concentrar 31.0% a 74.4% del valor importado, mientras que el HHI aumentó de 0.193 a 0.606. 
+
+En otros capítulos, el aumento de la concentración estuvo acompañado por un cambio en el proveedor principal. En materias vegetales para trenzar (HS14) el liderazgo pasó de Perú a Sri Lanka y la participación del principal proveedor aumentó de 26.9% a 66.4%. 
+
+En conjunto, estos resultados muestran que el incremento del HHI puede responder tanto al fortalecimiento de un proveedor que ya era dominante como a una reconfiguración del proveedor principal. 
+
+*Ahora cuales se diversificaron*
+
+```{r echo=FALSE}
+
+comparacion_hhi %>%
+  arrange(cambio_hhi) %>%
+  slice_head(n = 10) %>%
+  select(
+    `HS2` = hs2,
+    `Capítulo` = capitulo,
+    `HHI 2015` = hhi_2015,
+    `HHI 2025` = hhi_2025,
+    `Cambio HHI` = cambio_hhi,
+    `Top 1 2015 (%)` = top1_2015_pct,
+    `Top 1 2025 (%)` = top1_2025_pct,
+    `Cambio Top 1 (pp)` = cambio_top1_pp,
+    `Proveedor 2015` = socio_principal_2015,
+    `Proveedor 2025` = socio_principal_2025
+  ) %>%
+  knitr::kable(
+    digits = c(0, 0, 3, 3, 3, 1, 1, 1, 0, 0),
+    caption = "Capítulos con mayor reducción en la concentración de proveedores entre 2015 y 2025"
+  )
+```
+
+
+Entre los capítulos que más redujeron su concentración entre 2015 y 2025 se observa un patrón consistente: en la mayoría de los casos el proveedor principal se mantiene sin cambios, pero su participación disminuye de forma importante. Esto sugiere que la diversificación ocurrió principalmente por una redistribución del valor importado hacia otros proveedores, más que por un reemplazo del país líder.
+
+Por ejemplo, en tejidos textiles impregnados o recubiertos (HS59) Estados Unidos continuó siendo el principal proveedor, pero su participación cayó de 76.6% a 48.5%, mientras que el HHI disminuyó de 0.595 a 0.274.
+
+En conjunto, el análisis muestra que la concentración de proveedores no evolucionó de manera uniforme entre los distintos capítulos HS2. Algunos capítulos aumentaron claramente su dependencia de pocos proveedores. En otros casos ocurrió el proceso contrario: el HHI disminuyó y la participación del proveedor principal se redujo, reflejando una distribución más equilibrada del valor entre distintos socios.
+
+Por lo tanto, para evaluar la estructura de proveedores no basta con identificar al socio principal o contar el número de países participantes. Es necesario considerar conjuntamente el HHI, la participación del proveedor dominante y los cambios de estas medidas a lo largo del tiempo.
+
+Un capítulo altamente concentrado no necesariamente representa una parte importante de las importaciones mexicanas. El siguiente paso consiste en incorporar la importancia económica de cada capítulo para distinguir entre casos de alta concentración pero bajo peso comercial y aquellos que combinan concentración elevada con una participación relevante dentro de las importaciones.
+
+
+**- ¿Cómo ha cambiado la importancia económica de los distintos capítulos HS2 dentro de las importaciones mexicanas durante el periodo analizado?**
+
+
+
+Después de analizar cómo ha cambiado la concentración de proveedores, el siguiente paso consiste en evaluar la importancia económica de los distintos capítulos HS2 dentro de las importaciones mexicanas.
+
+
+```{r echo=FALSE}
+# Top 5 capítulos por valor de exportaciones hacia USA
+top5_productos_export_usa <- df_clean %>%
+  filter(
+    flow_desc == "Export",
+    str_detect(partnerDesc, regex("united states|usa", ignore_case = TRUE))
+  ) %>%
+  group_by(cmdCode, cmdDesc) %>%
+  summarise(
+    total_valor = sum(primaryValue, na.rm = TRUE) / 1e6,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(total_valor)) %>%
+  slice_head(n = 5) %>%
+  mutate(
+    producto = paste0("HS", cmdCode, " - ", cmdDesc)
+  ) %>%
+  select(
+    `Código HS2` = cmdCode,
+    `Producto` = cmdDesc,
+    `Valor (M USD)` = total_valor
+  )
+
+knitr::kable(
+  top5_productos_export_usa,
+  digits = 1,
+  format.args = list(big.mark = ","),
+  caption = "Principales capítulos HS2 exportados de México hacia Estados Unidos, 2015–2025"
+)
+# Top 5 capítulos por valor de importaciones desde USA
+top5_productos_import_usa <- df_clean %>%
+  filter(
+    flow_desc == "Import",
+    str_detect(partnerDesc, regex("united states|usa", ignore_case = TRUE))
+  ) %>%
+  group_by(cmdCode, cmdDesc) %>%
+  summarise(
+    total_valor = sum(primaryValue, na.rm = TRUE) / 1e6,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(total_valor)) %>%
+  slice_head(n = 5) %>%
+  select(
+    `Código HS2` = cmdCode,
+    `Producto` = cmdDesc,
+    `Valor (M USD)` = total_valor
+  )
+
+knitr::kable(
+  top5_productos_import_usa,
+  digits = 1,
+  format.args = list(big.mark = ","),
+  caption = "Principales capítulos HS2 importados por México desde Estados Unidos, 2015–2025"
+)
+```
+
+Notamos que con USA las categorías que se tienen en común tanto de exportación como de importación son Vehículos, maquinaria eléctrica y categoría 84 correspondiente a reactores nucleares, bolers, maquinaria y partes para estos.
+
+*Exportaciones*
+
+```{r}
+# Exportaciones
+
+top5_cmd_export <- df_clean %>%
+  filter(flow_desc == "Export") %>%
+  group_by(cmdCode) %>%
+  summarise(total_valor = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop") %>%
+  arrange(desc(total_valor)) %>%
+  slice_head(n = 5) %>%
+  pull(cmdCode)
+
+etiquetas_hs2 <- df_clean %>%
+  filter(cmdCode %in% top5_cmd_export) %>%
+  group_by(cmdCode) %>%
+  summarise(
+    cmdDesc = first(cmdDesc),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    nombre_corto = sapply(
+      strsplit(sub(";.*", "", cmdDesc), "\\s+"),
+      function(x) paste(head(x, 3), collapse = " ")
+    ),
+    categoria = paste0(cmdCode, " - ", nombre_corto)
+  )
+evolucion_export <- df_clean %>%
+  filter(
+    flow_desc == "Export",
+    cmdCode %in% top5_cmd_export
+  ) %>%
+  group_by(period, cmdCode) %>%
+  summarise(
+    total_valor = sum(primaryValue, na.rm = TRUE) / 1e6,
+    .groups = "drop"
+  ) %>%
+  left_join(
+    etiquetas_hs2 %>% select(cmdCode, categoria),
+    by = "cmdCode"
+  )
+
+ggplot(
+  evolucion_export,
+  aes(
+    x = factor(period),
+    y = total_valor,
+    color = categoria,
+    group = categoria
+  )
+) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_y_continuous(
+    labels = comma,
+    expand = expansion(mult = c(0.05, 0.15))
+  ) +
+  labs(
+    title = "Histórico del Top 5 en exportación",
+    x = NULL,
+    y = "Valor total (M USD)",
+    color = "Capítulo HS2"
+  ) +
+  guides(
+    color = guide_legend(
+      nrow = 2,
+      byrow = TRUE
+    )
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 9),
+    axis.ticks.y = element_blank()
+  )
+
+
+```
+Los cinco capítulos de mayor valor exportado acumulado presentan trayectorias distintas durante 2015–2025. Vehículos (HS87) mantiene el mayor valor exportado durante la mayor parte del periodo y muestra una tendencia general creciente, aunque con una caída visible en 2020 y una ligera reducción en 2025. Maquinaria mecánica (HS84) y maquinaria eléctrica (HS85) también muestran una tendencia ascendente, destacando el fuerte incremento de HS84 hacia 2025.
+
+*Importaciones*
+```{r}
+top5_cmd_export <- df_clean %>%
+  filter(flow_desc == "Import") %>%
+  group_by(cmdCode) %>%
+  summarise(total_valor = sum(primaryValue, na.rm = TRUE)/1000000, .groups = "drop") %>%
+  arrange(desc(total_valor)) %>%
+  slice_head(n = 5) %>%
+  pull(cmdCode)
+
+etiquetas_hs2 <- df_clean %>%
+  filter(cmdCode %in% top5_cmd_export) %>%
+  group_by(cmdCode) %>%
+  summarise(
+    cmdDesc = first(cmdDesc),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    nombre_corto = sapply(
+      strsplit(sub(";.*", "", cmdDesc), "\\s+"),
+      function(x) paste(head(x, 3), collapse = " ")
+    ),
+    categoria = paste0(cmdCode, " - ", nombre_corto)
+  )
+evolucion_export <- df_clean %>%
+  filter(
+    flow_desc == "Import",
+    cmdCode %in% top5_cmd_export
+  ) %>%
+  group_by(period, cmdCode) %>%
+  summarise(
+    total_valor = sum(primaryValue, na.rm = TRUE) / 1e6,
+    .groups = "drop"
+  ) %>%
+  left_join(
+    etiquetas_hs2 %>% select(cmdCode, categoria),
+    by = "cmdCode"
+  )
+
+ggplot(
+  evolucion_export,
+  aes(
+    x = factor(period),
+    y = total_valor,
+    color = categoria,
+    group = categoria
+  )
+) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_y_continuous(
+    labels = comma,
+    expand = expansion(mult = c(0.05, 0.15))
+  ) +
+  labs(
+    title = "Histórico del Top 5 en Importaciones",
+    x = NULL,
+    y = "Valor total (M USD)",
+    color = "Capítulo HS2"
+  ) +
+  guides(
+    color = guide_legend(
+      nrow = 2,
+      byrow = TRUE
+    )
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 9),
+    axis.ticks.y = element_blank()
+  )
+```
+
+Los principales capítulos de importación presentan diferencias importantes tanto en su magnitud como en su evolución durante el periodo. Maquinaria eléctrica (HS85) y maquinaria mecánica (HS84) concentran los mayores valores importados, mientras que vehículos (HS87), combustibles minerales (HS27) y plásticos (HS39) muestran trayectorias menores.
+
+Al igual que en las exportaciones, en 2020 se observa una caída en varios de los principales capítulos, seguida de una recuperación posterior. Sin embargo, dado que los valores están expresados en USD corrientes, estas variaciones representan cambios en el valor monetario importado y no necesariamente cambios equivalentes en las cantidades físicas comerciadas.
+
+El análisis exploratorio muestra que los capítulos HS2 no evolucionan de manera homogénea. Algunos mantienen una participación elevada dentro de las importaciones, otros ganan o pierden importancia a lo largo del periodo y, al mismo tiempo, presentan distintos niveles y cambios en la concentración de sus proveedores.
+Analizar cada capítulo de manera individual permite identificar casos particulares, pero dificulta reconocer patrones comunes entre el conjunto de categorías. Por ello, se utiliza un modelo de agrupamiento K-Means con el objetivo de identificar capítulos HS2 que presenten perfiles similares.
+
+---
+## Pregunta de investigación y alcance del modelo
+
+**Pregunta principal:** ¿Es posible identificar grupos de capítulos HS2 con perfiles similares de importancia económica y concentración de proveedores, considerando tanto sus niveles como los cambios observados entre el inicio y el final del periodo?
+
+**Hipótesis descriptiva:** la concentración no cambia de la misma manera en todos los capítulos, algunos de alto valor se concentran más y otros se diversifican. Se describen asociaciones, sin atribuir los cambios a una causa concreta.
+
+La **unidad del EDA** es año × flujo × capítulo HS2 y, cuando se estudian cuotas, socio comercial. El EDA conserva las etiquetas originales, el modelo utiliza únicamente el valor asignado a socios geográficos identificados. La **unidad de K-means** será el capítulo HS2: cada capítulo tendrá indicadores resumidos de concentración, cambio y participación importadora. No existe una etiqueta futura a predecir, el HHI es el indicador principal que queremos comprender y los grupos son perfiles descriptivos. Las exportaciones se conservan como contexto de la relación comercial de México, mientras que el modelo se enfoca en proveedores de importaciones.
+
+### 1. Cobertura y calidad antes de comparar años
+
+El número de capítulos, socios y registros por año permite detectar descargas incompletas. Revisar especialmente 2025 antes de interpretar cambios. Un país o capítulo sin valor positivo registrado no se imputa automáticamente como cero.
+
+```{r cobertura-adicional, echo=TRUE}
+calidad_adicional <- tibble(
+  registros_origen = nrow(df_comercio),
+  registros_limpios = nrow(df_clean),
+  valor_faltante_origen = sum(is.na(df_comercio$primaryValue)),
+  valor_no_positivo_origen = sum(!is.na(df_comercio$primaryValue) &
+                                   df_comercio$primaryValue <= 0),
+  duplicados_exactos_origen = sum(duplicated(df_comercio))
+)
+knitr::kable(calidad_adicional, caption = "Auditoría básica de calidad")
+
+duplicados_llave <- df_clean %>%
+  count(año, flow_code, partnerCode, hs2) %>% filter(n > 1)
+cat("Llaves año/flujo/socio/HS2 repetidas:", nrow(duplicados_llave), "\n")
+# Si hay repetidas, revisar su origen: el chunk de indicadores suma por socio,
+# pero dos filas idénticas o distintos desgloses podrían duplicar valor.
+
+cobertura_adicional <- df_clean %>% group_by(año, flow_code) %>%
+  summarise(registros = n(), capitulos_hs2 = n_distinct(hs2),
+            socios = n_distinct(partnerCode),
+            valor_mmusd = sum(primaryValue) / 1e9, .groups = "drop")
+knitr::kable(cobertura_adicional, digits = 1,
+             caption = "Cobertura por año y flujo (valor en miles de millones de USD)")
+
+faltan_periodos <- tidyr::expand_grid(año = 2015:2025,
+                                     flow_code = c("M", "X")) %>%
+  anti_join(cobertura_adicional, by = c("año", "flow_code"))
+if (nrow(faltan_periodos))
+  warning("Faltan combinaciones de año y flujo; revisar la descarga.")
+```
+Aparecen 97 capítulos HS2 en ambos flujos durante todos los años de 2015 a 2025. En particular, 2025 tiene cifras de cobertura parecidas a 2024: importaciones con 4,172 frente a 4,185 registros y exportaciones con 3,214 frente a 3,170. Esto hace razonable incluir 2025 en las comparaciones, aunque el conteo por sí solo no confirma que sus valores sean definitivos.
+
+```{r cobertura-por-capitulo-2020-2021}
+comparacion_socios <- df_clean %>%
+  filter(año %in% c(2020, 2021), flow_code %in% c("M", "X")) %>%
+  group_by(flow_code, hs2, año) %>%
+  summarise(
+    socios = n_distinct(partnerCode),
+    registros = n(),
+    valor_musd = sum(primaryValue) / 1e6,
+    .groups = "drop"
+  ) %>%
+  tidyr::pivot_wider(
+    names_from = año,
+    values_from = c(socios, registros, valor_musd)
+  ) %>%
+  mutate(
+    cambio_socios = socios_2021 - socios_2020,
+    cambio_registros = registros_2021 - registros_2020
+  ) %>%
+  arrange(flow_code, cambio_socios)
+
+# Los diez capítulos con mayor disminución de socios en cada flujo
+comparacion_socios %>%
+  group_by(flow_code) %>%
+  slice_min(cambio_socios, n = 10, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(flow_code, hs2, socios_2020, socios_2021,
+         cambio_socios, valor_musd_2020, valor_musd_2021) %>%
+  knitr::kable(digits = 1)
+```
+La tabla reúne los 10 capítulos HS2 con mayor caída en el número de socios de cada flujo. Es una selección de top de capítulos, así que no representa por sí sola el cambio de todo el comercio de México.
+
+El hallazgo más interesante es que menos socios no significa necesariamente menos comercio:
+* En importaciones, HS84 pasó de 160 a 115 socios (−45), mientras su valor subió de 65,845.5 a 79,159.5 millones de USD (+20.2 %).
+* También en importaciones, HS85 perdió 45 socios (191 a 146), pero su valor aumentó de 82,866.8 a 101,171.7 millones (+22.1 %).
+* En exportaciones, HS87 pasó de 111 a 92 socios (−19), mientras su valor creció de 100,692.6 a 114,306.7 millones (+13.5 %).
+* HS97 en importaciones es una excepción dentro de la selección: bajaron tanto los socios (38 a 14) como el valor (33.3 a 21.7 millones).
+
+
+El gráfico que teníamos anteriormente apila importaciones y exportaciones, esa suma representa el valor de **ambos flujos**, no el saldo comercial. El saldo anual se obtiene restando importaciones a exportaciones:
+
+```{r saldo-adicional, echo=TRUE, fig.width=9, fig.height=4}
+saldo_anual <- cobertura_adicional %>%
+  select(año, flow_code, valor_mmusd) %>%
+  pivot_wider(names_from = flow_code, values_from = valor_mmusd) %>%
+  mutate(saldo_mmusd = X - M)
+knitr::kable(saldo_anual, digits = 2,
+             caption = "Saldo de bienes: exportaciones menos importaciones")
+ggplot(saldo_anual, aes(año, saldo_mmusd, fill = saldo_mmusd >= 0)) +
+  geom_col(show.legend = FALSE) + geom_hline(yintercept = 0) +
+  scale_fill_manual(values = c("TRUE" = "#488b78", "FALSE" = "#b66664")) +
+  scale_x_continuous(breaks = 2015:2025) +
+  labs(title = "Saldo comercial anual de los capítulos incluidos",
+       x = "Año", y = "Miles de millones de USD corrientes") + theme_minimal()
+```
+
+
+```{r concentracion_periodo_completo}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# 1. Evolución anual por flujo.
+# Cada capítulo pesa según su valor comercial de ese año.
+resumen_anual <- indicadores %>%
+  filter(año %in% 2015:2025, valor_usd > 0) %>%
+  group_by(año, flow_code) %>%
+  summarise(
+    hhi_ponderado = weighted.mean(hhi, w = valor_usd),
+    top1_ponderado = weighted.mean(top1, w = valor_usd),
+    capitulos = n_distinct(hs2),
+    .groups = "drop"
+  )
+
+knitr::kable(resumen_anual, digits = 3)
+
+# 2. Gráfica de toda la trayectoria.
+resumen_anual %>%
+  pivot_longer(
+    cols = c(hhi_ponderado, top1_ponderado),
+    names_to = "indicador",
+    values_to = "valor"
+  ) %>%
+  ggplot(aes(x = año, y = valor, color = flow_code)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ indicador, scales = "free_y",
+             labeller = as_labeller(c(
+               hhi_ponderado = "HHI ponderado",
+               top1_ponderado = "Participación ponderada del socio principal"
+             ))) +
+  scale_x_continuous(breaks = 2015:2025) +
+  labs(
+    title = "Concentración del comercio de México, 2015–2025",
+    x = "Año",
+    y = "Valor del indicador",
+    color = "Flujo"
+  ) +
+  theme_minimal()
+
+# 3. Cambio por capítulo entre el inicio y el final del periodo.
+cambio_2015_2025 <- indicadores %>%
+  filter(año %in% c(2015, 2025)) %>%
+  select(año, flow_code, hs2, valor_usd,
+         hhi, top1, socio_principal) %>%
+  pivot_wider(
+    id_cols = c(flow_code, hs2),
+    names_from = año,
+    values_from = c(valor_usd, hhi, top1, socio_principal)
+  ) %>%
+  filter(!is.na(hhi_2015), !is.na(hhi_2025)) %>%
+  mutate(
+    cambio_hhi = hhi_2025 - hhi_2015,
+    cambio_top1_pp = 100 * (top1_2025 - top1_2015),
+    valor_2025_mmusd = valor_usd_2025 / 1e9
+  ) %>%
+  left_join(
+    indicadores %>%
+      filter(año == 2025) %>%
+      select(flow_code, hs2, capitulo),
+    by = c("flow_code", "hs2")
+  ) %>%
+  arrange(flow_code, desc(valor_usd_2025))
+
+# Los 10 capítulos de mayor valor en 2025, por cada flujo.
+cambio_2015_2025 %>%
+  group_by(flow_code) %>%
+  slice_max(valor_usd_2025, n = 10, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(flow_code, hs2, capitulo, valor_2025_mmusd,
+         hhi_2015, hhi_2025, cambio_hhi,
+         top1_2015, top1_2025, cambio_top1_pp,
+         socio_principal_2015, socio_principal_2025) %>%
+  knitr::kable(digits = 3)
+```
+
+Con las etiquetas originales, las importaciones muestran una menor concentración promedio durante 2015–2025 y las exportaciones permanecen más concentradas. Esta lectura descriptiva se contrasta más adelante con indicadores calculados solo entre socios geográficos identificados, dado el aumento de etiquetas no específicas en 2025.
+
+
+### 2. Del tamaño del capítulo a su concentración
+
+`participacion` ya indica el peso de cada capítulo dentro de las importaciones del mismo año. Se compara con el HHI: un capítulo muy concentrado pero pequeño cuenta una historia diferente a uno que combina alto valor y concentración. Para evitar basar una conclusión en un solo año, se contrastan promedios de 2015–2017 y 2023–2025.
+
+```{r cambios-hs2-adicional, echo=TRUE}
+perfil_hs2 <- indicadores %>%
+  filter(flow_code == "M") %>%
+  group_by(hs2) %>%
+  summarise(
+    capitulo = first(capitulo),
+    años_observados = n_distinct(año),
+    años_inicio = sum(año %in% 2015:2017),
+    años_fin = sum(año %in% 2023:2025),
+    hhi_medio = mean(hhi),
+    hhi_inicio = mean(hhi[año %in% 2015:2017]),
+    hhi_fin = mean(hhi[año %in% 2023:2025]),
+    participacion_media = mean(participacion),
+    participacion_inicio = mean(participacion[año %in% 2015:2017]),
+    participacion_fin = mean(participacion[año %in% 2023:2025]),
+    .groups = "drop"
+  ) %>%
+  filter(años_observados >= 8, años_inicio == 3, años_fin == 3) %>%
+  mutate(cambio_hhi = hhi_fin - hhi_inicio,
+         cambio_peso_pp = 100 * (participacion_fin - participacion_inicio))
+
+knitr::kable(perfil_hs2 %>% arrange(desc(cambio_hhi)) %>%
+               select(hs2, capitulo, hhi_inicio, hhi_fin,
+                      cambio_hhi, participacion_fin) %>% head(10),
+             digits = 3, caption = "Capítulos con mayor aumento del HHI importador")
+knitr::kable(perfil_hs2 %>% arrange(cambio_hhi) %>%
+               select(hs2, capitulo, hhi_inicio, hhi_fin,
+                      cambio_hhi, participacion_fin) %>% head(10),
+             digits = 3, caption = "Capítulos con mayor reducción del HHI importador")
+knitr::kable(perfil_hs2 %>% arrange(desc(abs(cambio_peso_pp))) %>%
+               select(hs2, capitulo, participacion_inicio,
+                      participacion_fin, cambio_peso_pp) %>% head(10),
+             digits = 3,
+             caption = "Mayores cambios absolutos de peso (puntos porcentuales)")
+```
+* HS84, maquinaria mecánica, pasó de representar aproximadamente 17.1 % a 18.3 % de las importaciones: ganó 1.148 puntos porcentuales. Este dato confirma que HS84 es importante y debe aparecer cuando corrijas la tabla comparativa de HHI.
+
+* HS85, equipo eléctrico, perdió 0.697 puntos porcentuales, pero siguió siendo el capítulo de mayor peso entre los mostrados: 20.6 % en el periodo final. Juntos, HS84 y HS85 representan aproximadamente 38.9 %.
+
+Además del HHI, esta tabla muestra si cambió el país que tenía la cuota más alta en cada capítulo. El cambio de líder no prueba por sí solo que todos los demás proveedores hayan cambiado.
+
+```{r cambio-socio-lider, echo=TRUE}
+cambio_lider <- indicadores %>%
+  filter(flow_code == "M", año %in% c(2015, 2025)) %>%
+  select(año, hs2, socio_principal, top1, valor_usd) %>%
+  pivot_wider(names_from = año,
+              values_from = c(socio_principal, top1, valor_usd)) %>%
+  filter(!is.na(socio_principal_2015), !is.na(socio_principal_2025)) %>%
+  mutate(cambio_de_lider = socio_principal_2015 != socio_principal_2025) %>%
+  arrange(desc(valor_usd_2025))
+knitr::kable(cambio_lider %>% head(15), digits = 3,
+             caption = "Proveedor principal en 2015 y 2025 para los capítulos de mayor valor en 2025")
+```
+
+Entre los capítulos de mayor valor importado en 2025, no se observó un cambio de proveedor principal al comparar 2015 con 2025. Sin embargo, sí cambió cuánto valor concentraba ese proveedor. La cuota del líder disminuyó notablemente en maquinaria mecánica, vehículos y aluminio, mientras que aumentó en combustibles. Por ello, la permanencia de un país en primer lugar no implica que la concentración comercial permanezca constante. 
+
+```{r concentracion-y-peso, echo=TRUE, fig.width=9, fig.height=6}
+vista_2025 <- indicadores %>% filter(año == 2025, flow_code == "M")
+etiquetas_2025 <- vista_2025 %>% slice_max(valor_usd, n = 12)
+ggplot(vista_2025, aes(participacion, hhi, size = valor_usd / 1e9)) +
+  geom_point(color = "#537d9b", alpha = 0.65) +
+  ggrepel::geom_text_repel(data = etiquetas_2025, aes(label = hs2),
+                           size = 3, show.legend = FALSE) +
+  scale_x_log10(labels = scales::percent) +
+  labs(title = "Peso económico y concentración por capítulo en 2025",
+       subtitle = "Se etiquetan los 12 capítulos de mayor valor importado",
+       x = "Porcentaje de las importaciones (escala logarítmica)",
+       y = "HHI de proveedores", size = "Miles de millones\nde USD") +
+  theme_minimal()
+```
+
+Arriba y a la derecha están los capítulos que combinan mayor concentración y participación. La ubicación no demuestra riesgo de desabasto: el HHI mide valor, no cantidades físicas ni facilidad de cambiar de proveedor. Las variaciones nominales también pueden reflejar precios.
+
+En 2025, los capítulos de mayor valor importado no fueron necesariamente los más concentrados. Maquinaria mecánica (HS84) y equipo eléctrico (HS85) tuvieron un HHI relativamente bajo con las etiquetas originales. Combustibles (HS27) combinó un valor importante con alta concentración. El HHI de HS84 y HS85 se revisa más adelante porque parte de su valor corresponde a etiquetas de socio no específicas.
+
+### 3. Preparación de datos para el modelo
+
+La unidad del modelo es el **capítulo HS2 de importaciones**: cada fila resume su comportamiento entre 2015 y 2025. Antes de agruparlos, revisamos la cobertura temporal y las etiquetas que no identifican un país. El capítulo HS99 se conserva en el análisis descriptivo, pero se excluye del agrupamiento porque reúne mercancías sin una categoría de producto especificada.
+
+```{r revision-previa-modelo}
+# Etiquetas de socios que incluyen "nes" (no especificados).
+# Esta revisión NO elimina registros automáticamente.
+socios_no_especificados <- df_clean %>%
+  filter(
+    flow_code == "M",
+    stringr::str_detect(
+      partnerDesc,
+      stringr::regex("\\bnes\\b", ignore_case = TRUE)
+    )
+  ) %>%
+  group_by(partnerCode, partnerDesc) %>%
+  summarise(
+    registros = n(),
+    valor_usd = sum(primaryValue),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(valor_usd))
+
+knitr::kable(
+  socios_no_especificados,
+  caption = "Etiquetas de socios no especificados en importaciones"
+)
+
+# Comprobar cuántos años tiene cada capítulo en el perfil ya calculado.
+perfil_hs2 %>%
+  count(años_observados, name = "capitulos") %>%
+  knitr::kable(
+    caption = "Cobertura temporal de los capítulos candidatos"
+  )
+```
+
+```{r}
+codigos_no_especificados <- c(490, 899, 568, 637)
+
+peso_anual_no_especificado <- df_clean %>%
+  filter(flow_code == "M") %>%
+  group_by(año) %>%
+  summarise(
+    valor_total_usd = sum(primaryValue),
+    valor_no_especificado_usd = sum(
+      primaryValue[partnerCode %in% codigos_no_especificados]
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    porcentaje_no_especificado =
+      100 * valor_no_especificado_usd / valor_total_usd
+  )
+
+knitr::kable(
+  peso_anual_no_especificado,
+  digits = 2,
+  caption = "Peso anual de las etiquetas de socio no especificado"
+)
+
+peso_capitulo_no_especificado <- df_clean %>%
+  filter(flow_code == "M") %>%
+  group_by(año, hs2) %>%
+  summarise(
+    valor_total_usd = sum(primaryValue),
+    valor_no_especificado_usd = sum(
+      primaryValue[partnerCode %in% codigos_no_especificados]
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    porcentaje_no_especificado =
+      100 * valor_no_especificado_usd / valor_total_usd
+  )
+
+peso_capitulo_no_especificado %>%
+  filter(año == 2025) %>%
+  arrange(desc(valor_no_especificado_usd)) %>%
+  head(15) %>%
+  knitr::kable(
+    digits = 2,
+    caption = "Capítulos con más valor atribuido a esas etiquetas en 2025"
+  )
+```
+```{r}
+codigos_no_especificados <- c(490, 899, 568, 637)
+
+indicadores_sin_no_especificados <- por_socio %>%
+  filter(
+    flow_code == "M",
+    !partnerCode %in% codigos_no_especificados
+  ) %>%
+  group_by(año, hs2) %>%
+  mutate(
+    cuota = valor_socio_usd / sum(valor_socio_usd)
+  ) %>%
+  summarise(
+    hhi_sin = sum(cuota^2),
+    top1_sin = max(cuota),
+    socio_principal_sin = socio_nombre[which.max(cuota)],
+    valor_usd_sin = sum(valor_socio_usd),
+    .groups = "drop"
+  )
+
+comparacion_sensibilidad <- indicadores %>%
+  filter(
+    flow_code == "M",
+    año %in% c(2015, 2024, 2025),
+    hs2 %in% c("84", "85", "27")
+  ) %>%
+  select(año, hs2, capitulo, valor_usd,
+         hhi_original = hhi, top1_original = top1,
+         socio_principal_original = socio_principal) %>%
+  left_join(
+    indicadores_sin_no_especificados,
+    by = c("año", "hs2")
+  ) %>%
+  mutate(
+    porcentaje_no_especificado =
+      100 * (valor_usd - valor_usd_sin) / valor_usd,
+    diferencia_hhi = hhi_sin - hhi_original,
+    diferencia_top1_pp = 100 * (top1_sin - top1_original)
+  ) %>%
+  arrange(hs2, año)
+
+knitr::kable(
+  comparacion_sensibilidad,
+  digits = 3,
+  caption = "Sensibilidad del HHI y del socio principal a etiquetas no específicas"
+)
+```
+
+
+La prueba de sensibilidad muestra que la concentración de HS84 y HS85 sigue disminuyendo al restringir los cálculos a socios identificados, aunque la magnitud cambia. En 2025, las etiquetas no específicas representan 22.45 % del valor importado en HS84. Por ello, el modelo usa indicadores recalculados entre socios identificados y conserva los indicadores originales para contrastar resultados. La exclusión no convierte ese valor en cero ni lo reasigna a otro país.
+
+```{r perfil-socios-identificados-modelo}
+# La tabla de sensibilidad anterior ya recalculó el HHI y el valor por
+# año y capítulo tras excluir las cuatro etiquetas no específicas.
+indicadores_modelo <- indicadores_sin_no_especificados %>%
+  group_by(año) %>%
+  mutate(participacion = valor_usd_sin / sum(valor_usd_sin)) %>%
+  ungroup()
+
+perfil_modelo <- indicadores_modelo %>%
+  group_by(hs2) %>%
+  summarise(
+    años_observados = n_distinct(año),
+    años_inicio = sum(año %in% 2015:2017),
+    años_fin = sum(año %in% 2023:2025),
+    hhi_medio = mean(hhi_sin),
+    hhi_inicio = mean(hhi_sin[año %in% 2015:2017]),
+    hhi_fin = mean(hhi_sin[año %in% 2023:2025]),
+    participacion_media = mean(participacion),
+    participacion_inicio = mean(participacion[año %in% 2015:2017]),
+    participacion_fin = mean(participacion[año %in% 2023:2025]),
+    .groups = "drop"
+  ) %>%
+  filter(años_observados == 11, años_inicio == 3, años_fin == 3) %>%
+  mutate(
+    cambio_hhi = hhi_fin - hhi_inicio,
+    cambio_peso_pp = 100 * (participacion_fin - participacion_inicio)
+  ) %>%
+  left_join(
+    indicadores %>%
+      filter(año == 2025, flow_code == "M") %>%
+      select(hs2, capitulo),
+    by = "hs2"
+  )
+
+stopifnot(!anyDuplicated(perfil_modelo$hs2))
+```
+
+La participación del modelo tiene como denominador el valor importado asignado a socios identificados de cada año. Para interpretar el resultado se conserva también la cobertura del valor original.
+
+```{r cobertura-socios-identificados}
+cobertura_modelo <- indicadores %>%
+  filter(flow_code == "M") %>%
+  select(año, hs2, valor_total_usd = valor_usd) %>%
+  left_join(
+    indicadores_modelo %>%
+      select(año, hs2, valor_identificado_usd = valor_usd_sin),
+    by = c("año", "hs2")
+  ) %>%
+  mutate(cobertura_identificada = valor_identificado_usd / valor_total_usd)
+
+cobertura_modelo %>%
+  filter(año == 2025) %>%
+  arrange(cobertura_identificada) %>%
+  head(10) %>%
+  knitr::kable(digits = 3,
+               caption = "Capítulos con menor cobertura de socios identificados en 2025")
+```
+
+```{r preparar-matriz-kmeans}
+# Una fila por capítulo, con cobertura completa de 2015 a 2025.
+datos_modelo <- perfil_modelo %>%
+  filter(
+    años_observados == 11,
+    hs2 != "99"
+  ) %>%
+  mutate(
+    # Comprime los valores altos de participación sin perder los ceros.
+    peso_log = log1p(100 * participacion_media)
+  ) %>%
+  select(
+    hs2, capitulo,
+    hhi_medio, cambio_hhi,
+    participacion_media, cambio_peso_pp, peso_log
+  )
+
+# Comprobaciones antes de ajustar el modelo.
+stopifnot(
+  nrow(datos_modelo) > 5,
+  !anyDuplicated(datos_modelo$hs2),
+  !anyNA(datos_modelo),
+  all(is.finite(as.matrix(
+    datos_modelo %>%
+      select(hhi_medio, cambio_hhi, peso_log, cambio_peso_pp)
+  )))
+)
+
+# Solo las cuatro columnas numéricas entran a K-means.
+matriz_modelo <- datos_modelo %>%
+  select(hhi_medio, cambio_hhi, peso_log, cambio_peso_pp) %>%
+  as.matrix()
+
+stopifnot(all(apply(matriz_modelo, 2, sd) > 0))
+
+# Estandarizar: K-means utiliza distancias y las variables
+# tienen escalas distintas.
+matriz_estandar <- scale(matriz_modelo)
+rownames(matriz_estandar) <- datos_modelo$hs2
+
+knitr::kable(
+  datos_modelo %>%
+    arrange(desc(participacion_media)) %>%
+    head(10),
+  digits = 3,
+  caption = "Capítulos de mayor peso preparados para K-means"
+)
+
+cat("Capítulos incluidos en el modelo:", nrow(datos_modelo), "\n")
+```
+| Paso | Qué hicimos | Para qué sirve |
+|---|---|---|
+| **1. Obtención** | Descargamos de UN Comtrade el comercio anual reportado por México entre **2015 y 2025**, con importaciones y exportaciones por socio y capítulo HS2. Guardamos una copia local para reproducir el análisis sin descargarla cada vez. | Definir una fuente y un periodo consistentes. |
+| **2. Limpieza** | Conservamos registros con valor positivo, códigos HS2 de dos dígitos y socios distintos del total mundial, evitamos sumar desgloses secundarios. | No duplicar valores ni mezclar niveles de detalle. Cada fila representa un **agregado anual**, no una transacción individual. |
+| **3. Revisión de cobertura** | Comprobamos años, flujos, registros y capítulos. Los **97 capítulos candidatos** aparecen durante los 11 años. | Saber si es razonable comparar capítulos a través del tiempo. |
+| **4. Exploración** | Analizamos valores comerciales, saldo, capítulos de mayor peso y socios principales. | Entender qué capítulos importan económicamente antes de agruparlos. |
+| **5. Indicadores** | Calculamos por año y capítulo el **HHI**, la cuota del socio principal (`top1`) y la participación del capítulo en las importaciones. | Medir dos cosas distintas: **concentración dentro del capítulo** e **importancia del capítulo en el total**. |
+| **6. Calidad de las etiquetas** | Detectamos socios no específicos, como *“Other Asia, nes”*. En 2025 representan **7.67 %** de las importaciones y **22.45 %** de HS84. Comparamos los indicadores con y sin esas etiquetas. | Evitar interpretar una etiqueta geográfica no específica como si identificara a un país proveedor. |
+| **7. Perfil para el modelo** | Construimos **una fila por capítulo importador**, usando solo el valor asignado a socios identificados. Comparamos promedios de **2015–2017** con **2023–2025** y conservamos una medida de cobertura del valor. | Dar a K-means unidades comparables y documentar qué parte de los datos representa cada indicador. |
+| **8. Matriz numérica** | Excluimos HS99 del agrupamiento por ser mercancías no especificadas. Elegimos cuatro características, transformamos el peso con `log1p()` y estandarizamos las columnas. | Preparar las distancias que utilizará K-means sin que una variable domine solo por su escala. |
+
+¿Qué buscamos con K-means? Identificar grupos de capítulos con perfiles parecidos. Por ejemplo, podríamos encontrar capítulos de mucho valor y concentración creciente, u otros de mucho valor cuya concentración disminuyó. Los grupos permitirán resumir y comunicar los patrones del EDA, no son un pronóstico ni explican por sí solos la causa de los cambios. 
+
+Antes de ajustar los modelos K-Means, verificamos dos propiedades estadísticas de las cuatro variables seleccionadas (`hhi_medio`, `cambio_hhi`, `peso_log` y `cambio_peso_pp`):
+1. **Asimetría y curtosis (`e1071`):** Comprobamos cómo la transformación `peso_log = log1p(100 * participacion_media)` corrige el sesgo extremo de la participación original.
+2. **Correlación lineal (`corrplot`):** Verificamos que las cuatro variables aporten dimensiones distintas sin duplicar información en la distancia euclidiana.
+
+```{r}
+# Tabla de asimetría y curtosis 
+vars_resumen <- datos_modelo %>%
+  transmute(
+    `HHI medio` = hhi_medio,
+    `Cambio en HHI` = cambio_hhi,
+    `Participación media (%)` = 100 * participacion_media,
+    `Peso transformado (log1p)` = peso_log,
+    `Cambio en peso (pp)` = cambio_peso_pp
+  )
+
+tabla_momentos <- tibble(
+  Variable = names(vars_resumen),
+  Media = sapply(vars_resumen, mean),
+  Mediana = sapply(vars_resumen, median),
+  Desv_Est = sapply(vars_resumen, sd),
+  Asimetria = sapply(vars_resumen, e1071::skewness),
+  Curtosis = sapply(vars_resumen, e1071::kurtosis)
+)
+
+knitr::kable(
+  tabla_momentos,
+  digits = 3,
+  caption = "Momentos estadísticos de las variables del modelo"
+)
+
+# Matriz de correlación entre las 4 variables de entrada
+cor_vars <- cor(matriz_modelo, use = "complete.obs")
+colnames(cor_vars) <- c("HHI medio", "Cambio HHI", "Peso (log1p)", "Cambio peso (pp)")
+rownames(cor_vars) <- colnames(cor_vars)
+
+corrplot::corrplot(
+  cor_vars,
+  method = "color",
+  type = "upper",
+  addCoef.col = "black",
+  tl.col = "black",
+  tl.srt = 25,
+  diag = FALSE,
+  col = colorRampPalette(c("#b66664", "white", "#537d9b"))(200),
+  title = "Correlación entre las variables de entrada a K-Means",
+  mar = c(0, 0, 2, 0)
+)
+```
+La tabla de momentos estadísticos muestra que en la participación media (%), la media (1.001 %) es mucho mayor que la mediana (0.203 %), la asimetría de 4.9 y la curtosis 25.5. Esto ocurre porque la distribución tiene una cola derecha extrema: tan solo dos capítulos (HS85 y HS84) concentran cerca del 39 % de las importaciones, mientras que la mayoría de los capítulos representa menos del 0.5 % cada uno. 
+
+Al aplicar peso_log = log1p(100 * participacion_media), la asimetría y la curtosis se reducen drásticamente. Esto demuestra por qué fue necesario transformar la variable: si metiéramos la participación cruda a K-Means, la distancia euclidiana estaría dominada únicamente por HS85 y HS84. 
+
+En HHI, tanto la media como la mediana son ligeramente negativas, reflejando un proceso generalizado de diversificación comercial, es decir, esta reducción responde a una menor dependencia del proveedor principal (top1) y a una menor asimetría en las cuotas de abastecimiento dentro de la mayoría de los capítulos.
+
+```{r}
+# Matriz de correlación entre las 4 variables de entrada
+cor_vars <- cor(matriz_modelo, use = "complete.obs")
+colnames(cor_vars) <- c("HHI medio", "Cambio HHI", "Peso (log1p)", "Cambio peso (pp)")
+rownames(cor_vars) <- colnames(cor_vars)
+
+corrplot::corrplot(
+  cor_vars,
+  method = "color",
+  type = "upper",
+  addCoef.col = "black",
+  tl.col = "black",
+  tl.srt = 25,
+  diag = FALSE,
+  col = colorRampPalette(c("#b66664", "white", "#537d9b"))(200),
+  title = "Correlación entre las variables de entrada a K-Means",
+  mar = c(0, 0, 2, 0)
+)
+```
+
+La matriz de correlación indica que las relaciones lineales entre las cuatro variables de entrada son bajas o moderadas (ningún coeficiente supera $\vert{}r\vert{} = 0.45$). En particular, la correlación cercana a cero entre `Peso (log1p)` y `HHI medio` confirma que los capítulos donde México gasta más dinero no son necesariamente los más concentrados en un solo proveedo, por lo tanto, que no existan valores altos (>.80) valida que las cuatro variables aportan información distinta y no redundante al algoritmo K-Means.
+
+El siguiente paso es ajustar varios números de grupos, comparar su separación e interpretar qué capítulos quedaron en cada uno.
+
+```{r}
+str(datos_modelo)
+```
+Para determinar el número de grupos a utilizar en K-Means, se evaluaron soluciones entre (K=2) y (K=8). Para cada alternativa se calcularon dos métricas: la suma de cuadrados dentro de los clusters (WSS), que mide la dispersión interna de los grupos, y el coeficiente silhouette promedio, que evalúa qué tan bien separadas se encuentran las observaciones entre clusters.
+
+```{r}
+# ============================================================
+# Selección del número de clusters
+# ============================================================
+
+set.seed(123)
+
+# Probamos varios valores de K
+k_values <- 2:8
+
+evaluacion_k <- data.frame(
+  k = k_values,
+  wss = NA,
+  silhouette = NA
+)
+
+for (i in seq_along(k_values)) {
+
+  k <- k_values[i]
+
+  modelo_temp <- kmeans(
+    matriz_estandar,
+    centers = k,
+    nstart = 50
+  )
+
+  # Suma de cuadrados dentro de los clusters
+  evaluacion_k$wss[i] <- modelo_temp$tot.withinss
+
+  # Silhouette promedio
+  sil <- cluster::silhouette(
+    modelo_temp$cluster,
+    dist(matriz_estandar)
+  )
+
+  evaluacion_k$silhouette[i] <- mean(sil[, "sil_width"])
+}
+
+knitr::kable(
+  evaluacion_k,
+  digits = 3,
+  caption = "Evaluación del número de clusters"
+)
+
+g_wss <- ggplot(evaluacion_k, aes(x = k, y = wss)) +
+  geom_line(linewidth = 1, color = "#537d9b") +
+  geom_point(size = 2.5, color = "#537d9b") +
+  geom_vline(xintercept = c(2, 4), linetype = "dashed", color = c("#848482", "#b66664")) +
+  scale_x_continuous(breaks = k_values) +
+  labs(title = "Método del Codo (WSS)", x = "Número de clusters (K)", y = "WSS") +
+  theme_minimal()
+
+g_sil <- ggplot(evaluacion_k, aes(x = k, y = silhouette)) +
+  geom_line(linewidth = 1, color = "#488b78") +
+  geom_point(size = 2.5, color = "#488b78") +
+  geom_vline(xintercept = c(2, 4), linetype = "dashed", color = c("#848482", "#b66664")) +
+  scale_x_continuous(breaks = k_values) +
+  labs(title = "Silhouette promedio", x = "Número de clusters (K)", y = "Silhouette") +
+  theme_minimal()
+
+gridExtra::grid.arrange(g_wss, g_sil, ncol = 2)
+
+```
+
+La WSS disminuye conforme aumenta el número de clusters, comportamiento esperado en K-Means debido a que una mayor cantidad de grupos permite reducir la variabilidad interna. Por ello, esta métrica no debe interpretarse de manera aislada.
+
+El valor más alto de silhouette se obtuvo con (K=2), con un valor de 0.511, superior al observado para las demás alternativas. Esto sugiere que la solución de dos clusters presenta la mejor separación relativa entre grupos dentro de las opciones evaluadas.
+
+Por esta razón, se seleccionó inicialmente (K=2) para ajustar el modelo final. No obstante, además del criterio estadístico, se revisará la composición y el perfil de los clusters para verificar que la solución tenga una interpretación económica adecuada.
+
+```{r}
+# Modelo K-Means final con K = 2
+set.seed(123)
+
+k_elegido <- 2
+
+modelo_kmeans <- kmeans(
+  matriz_estandar,
+  centers = k_elegido,
+  nstart = 100
+)
+
+# Número de capítulos en cada cluster
+table(modelo_kmeans$cluster)
+
+# Centroides en variables estandarizadas
+modelo_kmeans$centers
+
+```
+El modelo K-Means con (K=2) generó dos grupos de tamaños muy distintos: el cluster 1 contiene 7 capítulos HS2, mientras que el cluster 2 contiene 89 capítulos.
+Esta diferencia en tamaño no implica por sí misma que el agrupamiento sea incorrecto. Sin embargo, sugiere que el algoritmo está identificando un conjunto reducido de capítulos con características considerablemente distintas respecto al resto de las importaciones. Por ello, antes de interpretar los grupos como perfiles económicos definitivos, es necesario revisar qué capítulos integran cada cluster y cuáles variables explican principalmente esta separación.
+
+Los centroides estandarizados muestran que la principal diferencia entre los dos clusters se encuentra en el peso económico de los capítulos. El cluster 1 presenta un valor de peso_log considerablemente superior al promedio, mientras que el cluster 2 se encuentra ligeramente por debajo.
+
+El cluster 1 también presenta, en promedio, una reducción relativa en su participación dentro de las importaciones y un aumento ligeramente mayor de la concentración de proveedores. En contraste, el cluster 2 reúne a la mayoría de los capítulos y presenta valores más cercanos al promedio general.
+
+Debido a que los centroides se encuentran expresados en unidades estandarizadas, estos valores muestran diferencias relativas respecto al promedio y no deben interpretarse directamente como porcentajes de participación o puntos del índice HHI, por lo que a continuación se examina la composición de cada grupo y su perfil promedio en escala original
+
+
+```{r}
+# Incorporar la asignación de cluster a cada capítulo
+datos_clusters <- datos_modelo %>%
+  mutate(
+    cluster = factor(modelo_kmeans$cluster)
+  )
+
+# Ver qué capítulos integran cada grupo
+datos_clusters %>%
+  arrange(cluster, desc(participacion_media)) %>%
+  select(
+    cluster,
+    hs2,
+    capitulo,
+    hhi_medio,
+    cambio_hhi,
+    participacion_media,
+    cambio_peso_pp
+  ) %>%
+  knitr::kable(
+    digits = 3,
+    caption = "Capítulos HS2 asignados a cada cluster"
+  )
+
+
+```
+
+La solución con \(K=2\) asignó **7 capítulos al cluster 1 y 89 al cluster 2**. El primer grupo está integrado por equipo eléctrico (HS85), maquinaria mecánica (HS84), combustibles minerales (HS27), plásticos (HS39), instrumentos ópticos y médicos (HS90), artículos de hierro o acero (HS73) y productos químicos orgánicos (HS29).
+
+Los capítulos del cluster 1 se caracterizan principalmente por tener una participación relativamente elevada dentro de las importaciones mexicanas y, en todos los casos, por haber reducido su participación entre el periodo inicial y final considerados. Sin embargo, no presentan un nivel homogéneo de concentración de proveedores: su HHI medio varía considerablemente entre capítulos.
+
+Por lo tanto, la separación obtenida con \(K=2\) parece estar determinada en mayor medida por la importancia económica y su cambio en el tiempo que por un patrón común de concentración. Esto debe considerarse al interpretar los clusters, ya que el objetivo del análisis es estudiar conjuntamente ambas dimensiones.
+
+
+
+
+```{r}
+perfil_clusters <- datos_clusters %>%
+  group_by(cluster) %>%
+  summarise(
+    capitulos = n(),
+    hhi_medio = mean(hhi_medio),
+    cambio_hhi = mean(cambio_hhi),
+    participacion_media = mean(participacion_media),
+    cambio_peso_pp = mean(cambio_peso_pp),
+    .groups = "drop"
+  )
+
+perfil_clusters %>%
+  mutate(
+    participacion_media_pct = 100 * participacion_media
+  ) %>%
+  select(
+    cluster,
+    capitulos,
+    hhi_medio,
+    cambio_hhi,
+    participacion_media_pct,
+    cambio_peso_pp
+  ) %>%
+  knitr::kable(
+    digits = 3,
+    caption = "Perfil promedio de los clusters en unidades originales"
+  )
+```
+La comparación de los perfiles promedio muestra que la principal diferencia entre los dos clusters corresponde al peso económico de los capítulos dentro de las importaciones mexicanas. Los siete capítulos del cluster 1 representan, en promedio, 8.27% de las importaciones, mientras que los 89 capítulos del cluster 2 representan aproximadamente 0.43%.
+
+En contraste, los niveles medios de concentración son similares entre ambos grupos: el HHI promedio es 0.369 en el cluster 1 y 0.390 en el cluster 2. Asimismo, los cambios promedio del HHI son relativamente pequeños en ambos casos.
+
+Por lo tanto, aunque (K=2) presenta la mayor silhouette promedio entre las alternativas evaluadas, la separación obtenida está determinada principalmente por la importancia económica de los capítulos y no genera una diferenciación clara en términos de concentración de proveedores. Debido a ello, resulta conveniente analizar también una solución con un mayor número de clusters antes de seleccionar el modelo definitivo.
+
+Por lo tanto, replicamos el procedimiento anterior utilizando $K=4$ para evaluar si un mayor número de grupos permite separar los capítulos tanto por su peso económico como por su nivel y cambio de concentración.
+
+```{r}
+# Modelo K-Means final con K = 4
+set.seed(123)
+
+k_elegido <- 4
+
+modelo_kmeans4 <- kmeans(
+  matriz_estandar,
+  centers = k_elegido,
+  nstart = 100
+)
+
+# Número de capítulos en cada cluster
+table(modelo_kmeans4$cluster)
+
+# Centroides en variables estandarizadas
+knitr::kable(
+  modelo_kmeans4$centers,
+  digits = 3,
+  caption = "Centroides en variables estandarizadas (K = 4)")
+
+```
+
+A diferencia de $K=2$ (donde solo peso_log y cambio_peso_pp se alejaban de cero mientras hhi_medio quedaba casi en 0 en ambos grupos), en la tabla de centroides de $K=4$ cada grupo se especializa en una dimensión distinta:
+
+1. Este grupo tiene el centroide con peso_log muy elevado (es decir,  capítulos gigantes de las importaciones mexicanas).  
+2. Otro grupo destaca por tener el centroide con hhi_medio altamente positivo y/o cambio_hhi positivo (capítulos de alta concentración).  
+3. Un tercer grupo presenta cambio_hhi marcadamente negativo (capítulos que redujeron su concentración y diversificaron proveedores).   
+4. El ultimo grupo agrupa a los capítulos de peso pequeño/intermedio y estabilidad relativa (valores cercanos al promedio 0 en cambio de peso y concentración moderada).  
+
+
+Una vez revisados los centroides estandarizados, asignamos a cada capítulo HS2 su número de cluster correspondiente en `datos_clusters4` y los ordenamos de mayor a menor participación media dentro de cada grupo para identificar qué sectores concretos integran cada perfil:
+
+```{r}
+# Incorporar la asignación de cluster a cada capítulo
+datos_clusters4 <- datos_modelo %>%
+  mutate(
+    cluster = factor(modelo_kmeans4$cluster)
+  )
+
+# Ver qué capítulos integran cada grupo
+datos_clusters4 %>%
+  arrange(cluster, desc(participacion_media)) %>%
+  select(
+    cluster,
+    hs2,
+    capitulo,
+    hhi_medio,
+    cambio_hhi,
+    participacion_media,
+    cambio_peso_pp
+  ) %>%
+  knitr::kable(
+    digits = 3,
+    caption = "Capítulos HS2 asignados a cada cluster (k=4)"
+  )
+
+
+```
+Al revisar los capítulos que integran cada uno de los cuatro grupos en sus unidades originales, se observa una separación más clara que la obtenida con \(K=2\):
+
+Podemos observar que el cluster 1 está encabezado por los capítulos de mayor volumen en las importaciones mexicanas, comenzando por equipo eléctrico (`HS85`, con una participación media de `0.202` o 20.2% del total) y maquinaria mecánica (`HS84`, con `0.167` o 16.7%), seguidos por combustibles minerales (`HS27`). En la tabla se aprecia que tanto `HS85` como `HS84` mantienen una concentración de proveedores baja (`hhi_medio` de `0.203` y `0.208`, respectivamente) y registraron una ligera disminución en su concentración (`cambio_hhi` de `-0.030` y `-0.031`), además de una reducción en su peso relativo dentro del total de socios identificados (`cambio_peso_pp` de `-0.718` y `-0.266` puntos porcentuales). Como se vio antes, dentro de este grupo de gran tamaño el caso opuesto en concentración es `HS27` (combustibles), que sí depende fuertemente de un solo proveedor.
+
+A diferencia de la solución de dos grupos —que dejaba a los 89 capítulos restantes mezclados en un solo bloque—, el modelo con \(K=4\) los divide según su comportamiento:
+
+1. Separa en un grupo propio a los capítulos que ganaron mayor participación en las importaciones (encabezados por el sector automotriz y de autopartes, `HS87`, que aumentó su peso mientras reducía su concentración).
+
+2. Agrupa en otro perfil a los capítulos de **alta concentración de proveedores** (`hhi_medio` elevado y en aumento), donde un solo país concentra la mayor parte de las ventas hacia México (como cereales `HS10`, carnes `HS02`, semillas `HS12` o residuos alimentarios `HS23`).
+
+3. Reúne en el grupo restante a los capítulos de peso mediano y pequeño con **compras más repartidas entre varios países** (`hhi_medio` bajo o moderado y `cambio_hhi` negativo), que representan sectores donde México diversificó a sus proveedores.
+
+Para resumir el comportamiento general de estos cuatro grupos sin depender de la lectura individual de los 96 capítulos, a continuación se calcula el promedio de cada indicador por cluster.
+```{r}
+perfil_clusters4 <- datos_clusters4 %>%
+  group_by(cluster) %>%
+  summarise(
+    capitulos = n(),
+    hhi_medio = mean(hhi_medio),
+    cambio_hhi = mean(cambio_hhi),
+    participacion_media = mean(participacion_media),
+    cambio_peso_pp = mean(cambio_peso_pp),
+    .groups = "drop"
+  )
+
+perfil_clusters4 %>%
+  mutate(
+    participacion_media_pct = 100 * participacion_media
+  ) %>%
+  select(
+    cluster,
+    capitulos,
+    hhi_medio,
+    cambio_hhi,
+    participacion_media_pct,
+    cambio_peso_pp
+  ) %>%
+  knitr::kable(
+    digits = 3,
+    caption = "Perfil promedio de los clusters en unidades originales (k=4)"
+  )
+```
+
+En la gráfica anterior se observa cómo se distribuyen los cuatro grupos en función de su participación media (eje horizontal en escala logarítmica) y su HHI medio (eje vertical). Hacia la derecha se ubican los capítulos de mayor peso en las importaciones mexicanas (`85`, `84`, `87`, `27`, `39`, `90`), mientras que en el resto del plano la partición con \(K=4\) divide verticalmente a los capítulos: en la parte superior aparecen los capítulos con fuerte concentración en un proveedor (como `10`, `02`, `12`, `23`, `66` y `67`) y en la parte media e inferior se agrupan los capítulos con una estructura de proveedores más diversificada.
+
+Dado que en la ultima grafica el tamaño del punto representa la magnitud absoluta del cambio en el HHI (`|Cambio en HHI|`) sin distinguir su signo, complementamos la visualización cruzando la participación media con el valor con signo de `cambio_hhi`:
+
+```{r}
+#  Visualización de los 4 clusters: Peso económico vs Concentración (HHI)
+etiquetas_destacadas <- datos_clusters4 %>%
+  filter(participacion_media >= 0.015 | hhi_medio >= 0.65 | abs(cambio_hhi) >= 0.12)
+
+ggplot(datos_clusters4, aes(x = participacion_media, y = hhi_medio,
+                             color = cluster, size = abs(cambio_hhi))) +
+  geom_point(alpha = 0.8) +
+  ggrepel::geom_text_repel(
+    data = etiquetas_destacadas,
+    aes(label = hs2),
+    size = 3.2,
+    show.legend = FALSE,
+    max.overlaps = 20
+  ) +
+  scale_x_log10(labels = scales::percent) +
+  labs(
+    title = "Agrupamiento K-Means (K = 4): Peso económico y concentración por capítulo",
+    subtitle = "Indicadores calculados sobre socios geográficos identificados (2015–2025)",
+    x = "Participación media en las importaciones (escala logarítmica)",
+    y = "HHI medio de proveedores",
+    color = "Cluster (K = 4)",
+    size = "|Cambio en HHI|"
+  ) +
+  theme_minimal()
+```
+En esta gráfica, la línea horizontal punteada en cero separa a los capítulos que aumentaron su concentración entre 2015–2017 y 2023–2025 (arriba) de aquellos que la redujeron (abajo). Se aprecia que entre los capítulos de gran peso comercial, maquinaria mecánica (`84`) y vehículos (`87`) se ubican por debajo de cero (disminución del HHI), mientras que combustibles minerales (`27`) se ubica por encima de cero al haber incrementado la proporción del valor concentrado en su proveedor principal.
+
+Replicamos una tercera vez el modelo pero ahora con K=5, ya que visualmente se ve una mejora en el metodo del codo y se observa un rebote en ese valor para el coeficiente *silhouette* promedio, así podremos saber si conviene elegir K=4 o k=5.
+
+Como en los casos anteriores,  revisamos los centroides para entender como el algoritmo decide separar un grupo del resto, en este caso 5 grupos.
+
+```{r}
+# Modelo K-Means final con K = 5
+set.seed(123)
+
+k_elegido <- 5
+
+modelo_kmeans5 <- kmeans(
+  matriz_estandar,
+  centers = k_elegido,
+  nstart = 100
+)
+
+# Número de capítulos en cada cluster
+table(modelo_kmeans5$cluster)
+
+# Centroides en variables estandarizadas
+knitr::kable(
+  modelo_kmeans5$centers,
+  digits = 3,
+  caption = "Centroides en variables estandarizadas (K = 5)")
+
+```
+
+El modelo partió a los sectores concentrados (es decir, se le compra casi todo a un solo país), el cluster 1 aisla a aquellos sectores que sufrieron un aumento de dependencia en el transcurso de la ultima decada (un `cambio_hhi` muy elevado), mientras que el cluster 5 agrupa a los que tienen una dependencia alta y sin mucha fluctuación (`hhi_medio` altísimo). 
+
+El Grupo 2 quedó con valores negativos o muy cercanos a cero, representando a la base de la economía que se mantiene estable y diversificada.
+
+El cluster 3 alberga aquellos que tienen un salto gigante en sus ganancias de participación (`cambio_peso_pp` extremo) y para el 4 se agruparon aquellos con un tamaño ecómico muy grande (valor en `peso_log` altísimo)
+
+```{r}
+# Incorporar la asignación de cluster a cada capítulo
+datos_clusters5 <- datos_modelo %>%
+  mutate(
+    cluster = factor(modelo_kmeans5$cluster)
+  )
+
+# Ver qué capítulos integran cada grupo
+datos_clusters5 %>%
+  arrange(cluster, desc(participacion_media)) %>%
+  select(
+    cluster,
+    hs2,
+    capitulo,
+    hhi_medio,
+    cambio_hhi,
+    participacion_media,
+    cambio_peso_pp
+  ) %>%
+  knitr::kable(
+    digits = 3,
+    caption = "Capítulos HS2 asignados a cada cluster (k=5)"
+  )
+
+
+```
+
+La lista de productos confirma cómo el modelo separó estos 5 clusters:
+
+**Cluster 1:** Es un grupo de 9 capítulos de tamaño menor (como ciertos minerales `HS26`, relojería `HS91` y tabaco `HS24`). Son sectores cuyas compras antes estaban más repartidas, pero que en los últimos años se concentraron demasiado en un solo proveedor.
+**Cluster 2:** Aqui se encuentra la ropa, muebles, papel, herramientas. Son sectores comunes y estables que le compran a muchos países del mundo, manteniendo un nivel de dependencia bajo.
+**Cluster3:** Contiene vehículos y autopartes (`HS87`),  hierro (`HS72`) y el aluminio (`HS76`).El modelo los puso en un cluster aparte porque, aunque también mueven mucho dinero, la porción que ocupan dentro del total de importaciones de México creció muchísimo más rápido que la del resto.
+**Cluster 4:** Aquí están los 8 productos principales que siempre representan la mayor parte de las compras del país, como la maquinaria mecánica (`HS84`), los electrónicos (`HS85`), los combustibles (`HS27`) y los plásticos (`HS39`).
+**Cluster 5:** Agrupa a 27 sectores que siempre han dependido fuertemente de un solo país. Aquí destacan alimentos básicos y materias primas como cereales (`HS10`), carnes (`HS02`), residuos alimentarios (`HS23`) y semillas (`HS12`).
+
+En la siguiente gráfica, cada punto representa un capítulo de importación:
+```{r}
+#  Visualización de los 5 clusters: Peso económico vs Concentración (HHI)
+etiquetas_destacadas <- datos_clusters5 %>%
+  filter(participacion_media >= 0.015 | hhi_medio >= 0.65 | abs(cambio_hhi) >= 0.12)
+
+ggplot(datos_clusters5, aes(x = participacion_media, y = hhi_medio,
+                             color = cluster, size = abs(cambio_hhi))) +
+  geom_point(alpha = 0.8) +
+  ggrepel::geom_text_repel(
+    data = etiquetas_destacadas,
+    aes(label = hs2),
+    size = 3.2,
+    show.legend = FALSE,
+    max.overlaps = 20
+  ) +
+  scale_x_log10(labels = scales::percent) +
+  labs(
+    title = "Agrupamiento K-Means (K = 5): Peso económico y concentración por capítulo",
+    subtitle = "Indicadores calculados sobre socios geográficos identificados (2015–2025)",
+    x = "Participación media en las importaciones (escala logarítmica)",
+    y = "HHI medio de proveedores",
+    color = "Cluster (K = 5)",
+    size = "|Cambio en HHI|"
+  ) +
+  theme_minimal()
+```
+Al ver los colores en la gráfica, podemos ver cómo se divide la economía en 5 clusters:
+
+1. **A la derecha, los sectores donde más gastamos (Azul y Verde claro):**
+**Cluster 4 (Azules):** Son los productos principales en los que México siempre gasta más dinero (como máquinas `84` o plásticos `39`). Como casi todos están en la parte de abajo, sabemos que se los compramos a muchos países. La gran excepción son los combustibles (`27`), que están solos hasta arriba porque se los compramos casi a un solo vendedor.
+**Cluster 3 (Verde claro):** Son solo 3 sectores (liderados por los vehículos `87`). Tienen su propio color porque fueron los productos que más crecieron e importaron en estos diez años, como también están en la parte de abajo, sabemos que su éxito se logró comprando de forma repartida a varios países.
+
+2. **Parte de arriba, los que dependen de un solo país (Morados y Rojos):**
+**Cluster 5 (Morados):** Es el grupo grande que domina la parte alta (`10`, `23`, `04`, `02`). Son sectores de tamaño mediano (sobre todo alimentos básicos) que, históricamente, siempre le han comprado casi todo a un solo país.
+**Cluster 1 (Rojos):** Son los puntos que tienen el tamaño más grande de toda la gráfica (`50`, `67`, `24`). Ese tamaño enorme significa un cambio repentino: son sectores más pequeños que antes compraban a varios países, pero de pronto empezaron a depender de un solo proveedor.
+
+3. **Abajo a la izquierda, las compras comunes (Verde oscuro):**
+**Cluster 2 (Verde oscuro):** Es el grupo más amontonado en la parte de abajo, representa a todos los productos de tamaño pequeño o mediano que México le compra a muchísimos países del mundo de manera equilibrada. Son sectores estables, normales y sin el riesgo de depender de nadie en particular.
+
+### Limitaciones e interpretación de los resultados
+
+En las gráficas (codo y silueta promedio), descubrimos que usar 5 grupos es el punto de equilibrio ideal, aunque con 4 clusters ya se notaba un avance, al llegar a 5 la gráfica del Codo da su último paso útil antes de aplanarse, y la gráfica de Silueta nos confirma que en este punto los grupos quedan mejor separados. Agregar 6 o más grupos ya no aporta ninguna mejora al análisis (de hecho puede resultar contraproducente).   
+
+El análisis utiliza el dinero gastado (en dólares) y no las cantidades físicas, entonces si vemos grandes cambios en sectores como los combustibles (HS27) o cereales (HS10), debemos tomar en cuenta que podrían deberse a que el producto se volvió más caro a nivel mundial, y no necesariamente a que México haya importado un volumen mayor. 
+
+Como se documentó en la preparación del modelo, en años recientes aumentaron las compras registradas bajo etiquetas que no dicen qué país nos vendió (como "Other Asia, nes", que abarcó casi una cuarta parte de la maquinaria HS84 en 2025). Para no cometer el error de contar esa zona general como si fuera un solo país vendedor, el modelo se calculó únicamente usando las compras donde sí sabemos el país exacto de procedencia. Por ello, los grupos muestran cómo se reparte el comercio solo entre los socios identificados.Los códigos utilizados (HS2) agrupan familias completas de productos (como toda la electrónica o todos los vehículos). 
+
+Por eso, aunque un sector completo tenga sus compras bien repartidas de forma segura, por dentro todavía podrían existir productos muy específicos que dependan de un solo vendedor, además, estos números reflejan cómo se distribuye el dinero, pero no indican qué tan fácil sería cambiar de proveedor en la práctica ni explican las causas detrás de esos cambios.
+
+### Conclusiones 
+
+
+Al analizar las importaciones de México entre 2015 y 2025, dividir la economía en 5 grupos nos permitió darnos cuenta de situaciones particularmente interesnates:
+
+Los sectores donde México gasta más dinero como maquinaria (HS84) y electrónicos (HS85) son estables y le compran a muchos países. Por su parte, los vehículos (HS87) crecieron tan rápido que formaron su propio grupo de éxito, demostrando que se puede crecer muchísimo sin depender de un solo vendedor.
+
+Por otro lado, los combustibles (HS27) son el único sector grande que depende casi totalmente de un solo país (principalmente Estados Unidos). Además, hay un grupo entero de productos básicos, como los cereales (HS10) y semillas (HS12), que históricamente siempre han estado "atrapados" comprándole casi todo a un solo proveedor (E.U).
+
+También comprobamos que los resultados son consistentes con la hipótesis planteada: el comercio de México no evolucionó parejo, es decir, mientras la gran mayoría de la manufactura común empezó a repartir sus compras de forma más equilibrada entre varios países, descubrimos un pequeño grupo de sectores que hizo exactamente lo contrario: pasaron de comprarle a muchos a depender casi totalmente de un solo país de la noche a la mañana.
+
+Finalmente, aunque al principio parecía más fácil hacer solo 2 o 4 grupos, las gráficas nos confirmaron que 5 era el número más adecuado. Usar 5 grupos fue lo único que nos permitió "observar" detalles clave que de otra forma no habríamos visto, como el crecimiento aislado del sector automotriz y la diferencia exacta entre ser dependiente "de toda la vida" y volverse dependiente de forma repentina.
+
+
+
+
+
+```{r exportar-dashboard, include=FALSE}
+dir.create("datos", showWarnings = FALSE)
+
+   saveRDS(datos_clusters5, "datos/clusters_k5.rds")
+   saveRDS(saldo_anual, "datos/saldo_anual.rds")
+
+   socios_top5 <- por_socio %>%
+     filter(flow_code == "M", !partnerCode %in% codigos_no_especificados) %>%
+     group_by(año, hs2) %>%
+     mutate(cuota = valor_socio_usd / sum(valor_socio_usd)) %>%
+     slice_max(cuota, n = 5, with_ties = FALSE) %>%
+     ungroup() %>%
+     select(año, hs2, socio_nombre, cuota, valor_socio_usd)
+   saveRDS(socios_top5, "datos/socios_top5.rds")
+```
+
+
+
