@@ -2206,6 +2206,167 @@ Al ver los colores en la gráfica, podemos ver cómo se divide la economía en 5
 3. **Abajo a la izquierda, las compras comunes (Verde oscuro):**
 **Cluster 2 (Verde oscuro):** Es el grupo más amontonado en la parte de abajo, representa a todos los productos de tamaño pequeño o mediano que México le compra a muchísimos países del mundo de manera equilibrada. Son sectores estables, normales y sin el riesgo de depender de nadie en particular.
 
+
+```{r modelo-exportaciones}
+# =====================================================================
+# ANÁLISIS COMPLEMENTARIO: MODELO K-MEANS PARA EXPORTACIONES
+# =====================================================================
+
+# 1. Preparación de datos (excluyendo códigos no especificados como en importaciones)
+indicadores_export_sin_nes <- por_socio %>%
+  filter(
+    flow_code == "X",
+    !partnerCode %in% codigos_no_especificados
+  ) %>%
+  group_by(año, hs2) %>%
+  mutate(
+    cuota = valor_socio_usd / sum(valor_socio_usd)
+  ) %>%
+  summarise(
+    hhi_sin = sum(cuota^2),
+    top1_sin = max(cuota),
+    socio_principal_sin = socio_nombre[which.max(cuota)],
+    valor_usd_sin = sum(valor_socio_usd),
+    .groups = "drop"
+  )
+
+# 2. Cálculo de participación anual
+indicadores_modelo_export <- indicadores_export_sin_nes %>%
+  group_by(año) %>%
+  mutate(participacion = valor_usd_sin / sum(valor_usd_sin)) %>%
+  ungroup()
+
+# 3. Perfil del modelo (comparando 2015-2017 vs 2023-2025)
+perfil_modelo_export <- indicadores_modelo_export %>%
+  group_by(hs2) %>%
+  summarise(
+    años_observados = n_distinct(año),
+    años_inicio = sum(año %in% 2015:2017),
+    años_fin = sum(año %in% 2023:2025),
+    hhi_medio = mean(hhi_sin),
+    hhi_inicio = mean(hhi_sin[año %in% 2015:2017]),
+    hhi_fin = mean(hhi_sin[año %in% 2023:2025]),
+    participacion_media = mean(participacion),
+    participacion_inicio = mean(participacion[año %in% 2015:2017]),
+    participacion_fin = mean(participacion[año %in% 2023:2025]),
+    .groups = "drop"
+  ) %>%
+  filter(años_observados == 11, años_inicio == 3, años_fin == 3) %>%
+  mutate(
+    cambio_hhi = hhi_fin - hhi_inicio,
+    cambio_peso_pp = 100 * (participacion_fin - participacion_inicio)
+  )
+
+# 4. Matriz K-Means estandarizada
+datos_modelo_export <- perfil_modelo_export %>%
+  filter(hs2 != "99") %>%
+  mutate(peso_log = log1p(100 * participacion_media)) %>%
+  select(hs2, hhi_medio, cambio_hhi, participacion_media, cambio_peso_pp, peso_log)
+
+matriz_export <- datos_modelo_export %>%
+  select(hhi_medio, cambio_hhi, peso_log, cambio_peso_pp) %>%
+  as.matrix()
+
+matriz_estandar_export <- scale(matriz_export)
+rownames(matriz_estandar_export) <- datos_modelo_export$hs2
+
+# 5. Ajuste del Modelo (Usaremos K=4 como punto de partida)
+set.seed(123)
+modelo_kmeans_export <- kmeans(matriz_estandar_export, centers = 4, nstart = 100)
+
+datos_clusters_export <- datos_modelo_export %>%
+  mutate(cluster = factor(modelo_kmeans_export$cluster))
+
+# 6. Guardar resultados
+saveRDS(datos_clusters_export, "datos/clusters_export.rds")
+
+```
+
+
+```{r graficas-evaluacion-export}
+# ============================================================
+# Selección del número de clusters para Exportaciones
+# ============================================================
+set.seed(123)
+k_values <- 2:8
+
+evaluacion_k_export <- data.frame(
+  k = k_values,
+  wss = NA,
+  silhouette = NA
+)
+
+for (i in seq_along(k_values)) {
+  k <- k_values[i]
+  modelo_temp <- kmeans(matriz_estandar_export, centers = k, nstart = 50)
+  
+  # Suma de cuadrados dentro de los clusters
+  evaluacion_k_export$wss[i] <- modelo_temp$tot.withinss
+  
+  # Silhouette promedio
+  sil <- cluster::silhouette(modelo_temp$cluster, dist(matriz_estandar_export))
+  evaluacion_k_export$silhouette[i] <- mean(sil[, "sil_width"])
+}
+
+# Gráfica del Método del Codo (WSS)
+g_wss_exp <- ggplot(evaluacion_k_export, aes(x = k, y = wss)) +
+  geom_line(linewidth = 1, color = "#537d9b") +
+  geom_point(size = 2.5, color = "#537d9b") +
+  scale_x_continuous(breaks = k_values) +
+  labs(title = "Método del Codo (WSS) - Exportaciones", x = "Número de clusters (K)", y = "WSS") +
+  theme_minimal()
+
+# Gráfica de Silhouette Promedio
+g_sil_exp <- ggplot(evaluacion_k_export, aes(x = k, y = silhouette)) +
+  geom_line(linewidth = 1, color = "#488b78") +
+  geom_point(size = 2.5, color = "#488b78") +
+  scale_x_continuous(breaks = k_values) +
+  labs(title = "Silhouette promedio - Exportaciones", x = "Número de clusters (K)", y = "Silhouette") +
+  theme_minimal()
+
+# Mostrar ambas gráficas juntas
+gridExtra::grid.arrange(g_wss_exp, g_sil_exp, ncol = 2)
+
+```
+
+
+
+### 2. Gráfica de Dispersión Final (Clusters)
+Este bloque mapea los resultados finales usando las mismas dimensiones visuales que tu gráfica original: el eje horizontal representa el peso económico (escala logarítmica), el eje vertical representa la dependencia del mercado (HHI), el tamaño del punto refleja la magnitud del cambio y el color indica el clúster.
+
+```{r grafica-clusters-export}
+# ============================================================
+# Visualización de los Clusters de Exportación
+# ============================================================
+
+# Filtramos qué capítulos destacar con su etiqueta en la gráfica
+# (Aislamos a los gigantes exportadores, los hiper-concentrados o los de cambios bruscos)
+etiquetas_destacadas_export <- datos_clusters_export %>%
+  filter(participacion_media >= 0.02 | hhi_medio >= 0.80 | abs(cambio_hhi) >= 0.15)
+
+ggplot(datos_clusters_export, aes(x = participacion_media, y = hhi_medio,
+                             color = cluster, size = abs(cambio_hhi))) +
+  geom_point(alpha = 0.8) +
+  ggrepel::geom_text_repel(
+    data = etiquetas_destacadas_export,
+    aes(label = hs2),
+    size = 3.2,
+    show.legend = FALSE,
+    max.overlaps = 20
+  ) +
+  scale_x_log10(labels = scales::percent) +
+  labs(
+    title = "Exportaciones: Peso económico y concentración de mercado",
+    subtitle = "Indicadores calculados sobre socios geográficos identificados (2015–2025)",
+    x = "Participación media en las exportaciones (escala logarítmica)",
+    y = "HHI medio de clientes (Dependencia)",
+    color = "Cluster",
+    size = "|Cambio en HHI|"
+  ) +
+  theme_minimal()
+  
+```
+
 ### Limitaciones e interpretación de los resultados
 
 En las gráficas (codo y silueta promedio), descubrimos que usar 5 grupos es el punto de equilibrio ideal, aunque con 4 clusters ya se notaba un avance, al llegar a 5 la gráfica del Codo da su último paso útil antes de aplanarse, y la gráfica de Silueta nos confirma que en este punto los grupos quedan mejor separados. Agregar 6 o más grupos ya no aporta ninguna mejora al análisis (de hecho puede resultar contraproducente).   
